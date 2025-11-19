@@ -3,7 +3,7 @@
 This module contains simple helper functions to:
 - Clean numeric trait columns.
 - Compute match scores for each breed.
-- Build URLs to image searches for each breed.
+- Build URLs to image searches or sample image URLs for each breed.
 """
 
 from typing import Dict, List
@@ -49,12 +49,7 @@ def clean_breed_traits(df: pd.DataFrame) -> pd.DataFrame:
     df_clean = df.copy()
     for col in NUMERIC_TRAIT_COLUMNS:
         if col in df_clean.columns:
-            extracted = (
-                df_clean[col]
-                .astype(str)
-                .str.extract(r"(\d)")
-                .iloc[:, 0]
-            )
+            extracted = df_clean[col].astype(str).str.extract(r"(\d)").iloc[:, 0]
             df_clean[col] = pd.to_numeric(extracted, errors="coerce")
     return df_clean
 
@@ -78,7 +73,6 @@ def compute_match_scores(
     Returns:
         A DataFrame sorted by best match (smallest distance).
     """
-    # Only use rows that have trait values for the traits we care about.
     traits = list(user_profile.keys())
     df = numeric_df.dropna(subset=traits).copy()
 
@@ -98,7 +92,6 @@ def compute_match_scores(
     # Convert distance to score: closer means higher score.
     df["score"] = (1.0 - df["distance"] / max_distance).clip(0.0, 1.0) * 100.0
 
-    # Sort by best match.
     df = df.sort_values(by=["distance", "score"], ascending=[True, False])
     return df
 
@@ -114,3 +107,23 @@ def build_image_url(breed: str) -> str:
     """
     query = breed.replace(" ", "+")
     return f"{GITHUB_DATASET_URL}/search?q={query}"
+
+
+def get_breed_image_url(breed: str) -> str:
+    """Get a sample image URL for a breed.
+
+    This version uses the Unsplash "featured" endpoint to return an image
+    tagged with both "dog" and the breed name. In a production setting,
+    you could instead map each breed to a specific image from the GitHub
+    dataset.
+
+    Args:
+        breed: Dog breed name.
+
+    Returns:
+        A URL string pointing to an image that Streamlit can display.
+    """
+    # Replace spaces with "+" so the breed name can be used in a query.
+    query = breed.replace(" ", "+")
+    # This URL returns a random but relevant image on each load.
+    return f"https://source.unsplash.com/featured/?dog,{query}"
