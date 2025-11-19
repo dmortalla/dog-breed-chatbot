@@ -41,7 +41,7 @@ if "wizard_step" not in st.session_state:
 dog_breeds, trait_descriptions = load_data()
 
 
-def _safe_rerun():
+def _safe_rerun() -> None:
     """Handle different Streamlit versions safely."""
     try:
         st.rerun()
@@ -49,24 +49,105 @@ def _safe_rerun():
         try:
             st.experimental_rerun()
         except Exception:
+            # In the worst case, just continue without rerunning.
             pass
+
+
+# ============================================================
+# IMAGE HELPERS — map AKC names -> Maarten repo folders
+# ============================================================
+
+RAW_BASE_URL = (
+    "https://raw.githubusercontent.com/"
+    "maartenvandenbroeck/Dog-Breeds-Dataset/master"
+)
+
+
+_SPECIAL_NAME_MAP = {
+    # Common AKC "group-style" names → FCI-style base names
+    "retrievers (labrador)": "labrador retriever",
+    "retrievers (golden)": "golden retriever",
+    "retrievers (chesapeake bay)": "chesapeake bay retriever",
+    "retrievers (flat-coated)": "flat coated retriever",
+    "retrievers (curly-coated)": "curly coated retriever",
+    "spaniels (english springer)": "english springer spaniel",
+    "spaniels (cocker)": "cocker spaniel",
+    "spaniels (english cocker)": "english cocker spaniel",
+    "spaniels (boykin)": "boykin spaniel",
+    "spaniels (welsh springer)": "welsh springer spaniel",
+    "spaniels (american water)": "american water spaniel",
+    "spaniels (field)": "field spaniel",
+    "spaniels (sussex)": "sussex spaniel",
+    "pointers (german shorthaired)": "german short- haired pointing",
+    "pointers (german wirehaired)": "german wire- haired pointing",
+    # A few very common breeds where Maarten's folder name is known
+    "french bulldogs": "french bulldog",
+    "bulldogs": "bulldog",
+    "poodles": "poodle",
+    "beagles": "beagle",
+    "rottweilers": "rottweiler",
+    "dachshunds": "dachshund",
+    "chihuahuas": "chihuahua",
+    "shih tzu": "shih tzu",
+    "standard schnauzers": "standard schnauzer",
+    "yorkshire terriers": "yorkshire terrier",
+}
 
 
 def _breed_to_folder(breed_name: str) -> str:
     """
-    Convert a breed name from the CSV into a folder-friendly slug.
+    Convert an AKC-style breed name into a folder name
+    for the Dog-Breeds-Dataset repository.
 
-    Handles odd characters like 'Â', accents, brackets, etc., so that
-    'ShihÂ Tzu' -> 'shih_tzu', 'AmericanÂ HairlessÂ Terriers' -> 'american_hairless_terriers'.
+    This:
+    - Normalizes accents / weird spacing (e.g. 'ShihÂ Tzu' → 'shih tzu')
+    - Applies a few hand-tuned mappings where AKC naming differs
+    - Singularizes the last word ('Schnauzers' → 'Schnauzer')
+    - Returns something like 'shih tzu dog' or 'french bulldog'
     """
+    # Normalize odd unicode like Â, non-breaking spaces, accents
     text = unicodedata.normalize("NFKD", str(breed_name))
     text = text.encode("ascii", "ignore").decode("ascii")
-    text = text.lower()
-    text = text.replace("(", " ").replace(")", " ")
-    text = text.replace("'", " ").replace("/", " ")
-    text = re.sub(r"[^a-z0-9]+", "_", text)
-    text = re.sub(r"_+", "_", text).strip("_")
-    return text
+    text = text.lower().strip()
+    text = text.replace("’", "").replace("'", "")
+    text = re.sub(r"\s+", " ", text)
+
+    # Apply explicit special mappings first
+    if text in _SPECIAL_NAME_MAP:
+        base = _SPECIAL_NAME_MAP[text]
+    else:
+        base = text
+        # Singularize only the LAST word very simply
+        parts = base.split()
+        if parts:
+            last = parts[-1]
+            if last.endswith("ies"):
+                last = last[:-3] + "y"
+            elif last.endswith("s") and not last.endswith("ss"):
+                last = last[:-1]
+            parts[-1] = last
+            base = " ".join(parts)
+
+    # Many Maarten folders end with "dog", but some (e.g. french bulldog)
+    # already include "bulldog" etc. We add " dog" only if it does not
+    # already end with "dog".
+    if not base.endswith(" dog"):
+        folder = f"{base} dog"
+    else:
+        folder = base
+
+    return folder
+
+
+def _make_image_url(breed_name: str) -> str:
+    """
+    Build the raw.githubusercontent.com URL for Image_1.jpg of a breed.
+
+    We percent-encode spaces as %20 for the URL.
+    """
+    folder = _breed_to_folder(breed_name)
+    folder_for_url = folder.replace(" ", "%20")
+    return f"{RAW_BASE_URL}/{folder_for_url}/Image_1.jpg"
 
 
 # ============================================================
@@ -80,6 +161,8 @@ with st.sidebar:
         st.session_state.messages = []
         init_memory()
         st.session_state.wizard_step = 1
+        # Also reset the intro flag so the greeting shows again
+        st.session_state["intro_shown"] = False
         _safe_rerun()
 
     st.markdown("### 🧠 Your Preferences So Far")
@@ -106,15 +189,13 @@ if not st.session_state.get("intro_shown", False):
         "allergies or shedding concerns, whether you have kids, and what size of dog you’d like.\n\n"
         "I’ll guide you step by step and then recommend three dog breeds, each with an image "
         "and a short ‘social-post-style’ description.\n\n"
-        "**Let's start with your energy level.** Select one from the options shown in the drop-down menu below."
+        "**Let's start with your energy level.** Select one from the options shown in the "
+        "drop-down menu below."
     )
-    # Only show visually — DO NOT store in chat history
-    st.chat_message("assistant").markdown(intro)
+    add_assistant_msg(intro)
+    st.session_state.intro_shown = True  # only mark; rendering happens in the loop below
 
-    # Mark it shown so it never appears again
-    st.session_state.intro_shown = True
-
-# Render existing messages normally
+# Render existing messages once
 for role, content in st.session_state.messages:
     st.chat_message(role).markdown(content)
 
@@ -269,7 +350,7 @@ elif step >= 6:
         mem.get("living"),
         mem.get("allergies"),
         mem.get("children"),
-        mem.get("size")
+        mem.get("size"),
     )
 
     if not recs:
@@ -281,17 +362,14 @@ elif step >= 6:
         st.markdown("Here are your **top 3 dog breeds** based on your choices:")
 
         for breed in recs:
-            # folder name: lowercase, spaces -> underscores, no special chars
-            folder = breed.lower().replace(" ", "_").replace("’", "").replace("'", "")
-            image_path = f"data/dog_images/{folder}/Image_1.jpg"
+            image_url = _make_image_url(breed)
 
             col1, col2 = st.columns([1, 2])
 
             with col1:
-                try:
-                    st.image(image_path, width=220, caption=breed)
-                except:
-                    st.warning(f"No image found for {breed}")
+                # Even if the URL 404s, Streamlit will just show a broken image,
+                # which is OK for the contest. No app crash.
+                st.image(image_url, width=220, caption=breed)
 
             with col2:
                 st.markdown(
@@ -312,3 +390,4 @@ elif step >= 6:
             st.markdown("---")
 
     st.info("Want to try different answers? Use **Reset Conversation** in the sidebar.")
+
