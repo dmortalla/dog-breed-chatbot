@@ -37,20 +37,6 @@ with st.sidebar:
     theme_choice = st.radio("Theme:", ["light", "dark"], index=0 if st.session_state.theme == "light" else 1)
     st.session_state.theme = theme_choice
 
-    st.markdown("### 🎙 Voice Input")
-
-    try:
-        import streamlit_mic_recorder
-        audio = streamlit_mic_recorder.mic_recorder(
-            start_prompt="Tap to record your message",
-            stop_prompt="Recording...",
-            use_container_width=True
-        )
-        if audio:
-            st.session_state.voice_input = audio
-    except Exception:
-        st.warning("🎤 Voice input unavailable (package missing). Install `streamlit-mic-recorder` to enable it.")
-
     if st.button("🔄 Reset Conversation"):
         st.session_state.messages = []
         st.session_state.traits = {}
