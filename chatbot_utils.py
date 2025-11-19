@@ -16,6 +16,10 @@ import streamlit as st
 def load_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Load dog breed and trait description data from CSV files.
 
+    The CSV files must be located in a `data` folder at the project root:
+    - data/breed_traits.csv
+    - data/trait_description.csv
+
     Returns:
         A tuple of:
         - dog_breeds: main breed traits DataFrame.
