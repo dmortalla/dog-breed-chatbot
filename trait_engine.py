@@ -188,34 +188,39 @@ YES_NO = {
 }
 
 
-def classify_off_topic(text: str, step: int, new_prefs: Dict[str, int]) -> bool:
-    """Return True if irrelevant to dog-matching, False otherwise."""
+def classify_off_topic(text: str, extracted: dict) -> bool:
+    """
+    Return True only if the message is genuinely off-topic.
+
+    A message is OFF TOPIC only if:
+    - No new traits were extracted
+    - AND it does not match any dog/lifestyle keywords
+    - AND it is not a simple confirmation (yes/no/ok/etc.)
+    """
+
     t = text.lower().strip()
 
-    if step == 0:
+    # If any trait was extracted → topic is valid
+    if extracted:
         return False
 
-    if new_prefs:
+    # Accept simple confirmations as valid
+    confirmations = ["yes", "yep", "yeah", "sure", "ok", "okay", "that's fine",
+                     "sounds good", "fine", "alright", "go ahead"]
+    if any(t.startswith(c) for c in confirmations):
         return False
 
-    if t in YES_NO:
+    # Dog-related keywords that still count as on-topic
+    dog_keywords = [
+        "dog", "puppy", "breed", "shedding", "hair", "fur",
+        "energy", "calm", "quiet", "active", "yard",
+        "apartment", "house", "kids", "children",
+        "family", "allergy", "allergies", "hypoallergenic"
+    ]
+    if any(k in t for k in dog_keywords):
         return False
 
-    if step == 1 and any(w in t for w in ["low", "medium", "high", "calm", "energetic"]):
-        return False
-
-    if step == 2 and any(w in t for w in ["apartment", "house", "yard", "garden", "space"]):
-        return False
-
-    if step == 3 and any(w in t for w in ["allergy", "hypoallergenic", "shedding", "dander"]):
-        return False
-
-    if step == 4 and any(w in t for w in ["kid", "kids", "child", "children", "baby"]):
-        return False
-
-    if any(w in t for w in GENERAL_DOG_WORDS):
-        return False
-
+    # Otherwise off-topic
     return True
 
 
