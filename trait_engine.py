@@ -1,263 +1,142 @@
-from __future__ import annotations
-from typing import Dict, Optional
+from typing import Dict
 
 
-# ============================================================
-# LOW-LEVEL TRAIT EXTRACTORS
-# ============================================================
+def extract_traits_from_message(message: str) -> Dict[str, str]:
+    """
+    Extract dog-related preference traits from a user message.
 
-def _extract_energy(text: str) -> Optional[int]:
-    """Return 1 (low), 3 (medium), or 5 (high) based on natural language."""
-    t = text.lower()
+    Traits used by app.py:
+      - energy: "low" | "medium" | "high"
+      - living_space: "small apartment" | "standard apartment" | "house with a yard"
+      - shedding: "hypoallergenic" | "low-shedding" | "shedding ok"
+      - children: "yes" | "no"
+    """
+    msg = message.lower()
+    traits: Dict[str, str] = {}
 
-    low_words = [
-        "low energy",
-        "very low",
-        "calm",
-        "chill",
-        "relaxed",
-        "quiet dog",
-        "quiet and calm",
-        "not very active",
-        "doesn't make too much noise",
-        "doesnt make too much noise",
-        "not make too much noise",
-        "couch potato",
-    ]
-    if any(w in t for w in low_words):
-        return 1
-    # Simple "low" but not in "low shedding"
-    if "low" in t and "low shedding" not in t and "low-shedding" not in t:
-        return 1
+    # -------- ENERGY --------
+    if any(p in msg for p in ["low energy", "very calm", "calm dog", "not very active", "couch potato"]):
+        traits["energy"] = "low"
+    elif any(p in msg for p in ["medium energy", "moderate energy", "in the middle"]):
+        traits["energy"] = "medium"
+    elif any(p in msg for p in ["high energy", "very active", "energetic", "hyper"]):
+        traits["energy"] = "high"
+    else:
+        # fallback on single-word mentions if they look like energy
+        if "low energy" in msg or ("low" in msg and "shed" not in msg):
+            traits.setdefault("energy", "low")
+        if "medium energy" in msg or "medium" in msg:
+            traits.setdefault("energy", "medium")
+        if "high energy" in msg or "high" in msg:
+            traits.setdefault("energy", "high")
 
-    med_words = [
-        "medium energy",
-        "moderate energy",
-        "in the middle",
-        "not too active",
-        "balanced energy",
-    ]
-    if any(w in t for w in med_words):
-        return 3
+    # -------- LIVING SPACE --------
+    if "small apartment" in msg or "tiny apartment" in msg or "studio" in msg:
+        traits["living_space"] = "small apartment"
+    elif "apartment" in msg:
+        traits["living_space"] = "standard apartment"
+    elif any(p in msg for p in ["house with a yard", "yard", "garden", "big house", "house and yard"]):
+        traits["living_space"] = "house with a yard"
 
-    high_words = [
-        "high energy",
-        "very active",
-        "hyper",
-        "energetic",
-        "sporty",
-        "runner",
-    ]
-    if any(w in t for w in high_words):
-        return 5
-    if "high" in t:
-        return 5
+    # -------- SHEDDING / ALLERGIES --------
+    if "hypoallergenic" in msg:
+        traits["shedding"] = "hypoallergenic"
+    else:
+        low_shed_patterns = [
+            "low-shedding",
+            "low shedding",
+            "doesn't shed much",
+            "doesnt shed much",
+            "doesn't shed too much",
+            "doesnt shed too much",
+            "doesn't shed much hair",
+            "doesnt shed much hair",
+            "doesn't shed too much hair",
+            "doesnt shed too much hair",
+            "not shed much hair",
+            "not shed too much hair",
+            "don't shed much hair",
+            "dont shed much hair",
+            "don't shed too much hair",
+            "dont shed too much hair",
+            "little shedding",
+            "minimal shedding",
+            "hardly sheds",
+            "barely sheds",
+        ]
+        if any(p in msg for p in low_shed_patterns):
+            traits["shedding"] = "low-shedding"
+        elif "i don't mind shedding" in msg or "shedding is fine" in msg:
+            traits["shedding"] = "shedding ok"
 
-    return None
+    # -------- CHILDREN --------
+    # Answer to the “good with kids?” question
+    if any(p in msg for p in ["yes", "yep", "yeah", "sure", "of course"]) and "no " not in msg:
+        traits.setdefault("children", "yes")
+    if any(p in msg for p in ["no", "nope", "not really"]) and "yes" not in msg:
+        traits.setdefault("children", "no")
 
+    # Also infer children from words “kids / children” in a descriptive way
+    if "kids" in msg or "children" in msg:
+        if "no kids" in msg or "no children" in msg:
+            traits["children"] = "no"
+        elif "good with kids" in msg or "good with children" in msg:
+            traits["children"] = "yes"
 
-def _extract_home(text: str) -> Optional[int]:
-    """Return 1–2 = apartment, 4–5 = house/yard."""
-    t = text.lower()
-
-    small_words = ["studio", "small apartment", "tiny apartment", "condo"]
-    if any(w in t for w in small_words):
-        return 1
-
-    if "apartment" in t or "flat" in t:
-        return 2
-
-    big_words = ["yard", "garden", "big house", "house with a yard", "suburbs"]
-    if any(w in t for w in big_words):
-        return 5
-
-    if "house" in t or "home" in t:
-        return 4
-
-    return None
-
-
-def _extract_allergies(text: str) -> Optional[int]:
-    """Return 1 = hypoallergenic, 2 = low shedding, 4 = shedding ok."""
-    t = text.lower()
-
-    # Hypoallergenic / allergy-focused
-    if "hypoallergenic" in t:
-        return 1
-
-    if "allergy" in t or "allergies" in t or "asthma" in t:
-        # If allergies are mentioned at all, assume they care about shedding
-        return 2
-
-    # Broad set of "low shedding" phrases
-    low_shed_patterns = [
-        "low-shedding",
-        "low shedding",
-        "little shedding",
-        "minimal shedding",
-        "hardly sheds",
-        "barely sheds",
-        "doesn't shed much",
-        "doesnt shed much",
-        "doesn't shed too much",
-        "doesnt shed too much",
-        "doesn't shed much hair",
-        "doesnt shed much hair",
-        "doesn't shed too much hair",
-        "doesnt shed too much hair",
-        "not shed much hair",
-        "not shed too much hair",
-        "don't shed much hair",
-        "dont shed much hair",
-        "don't shed too much hair",
-        "dont shed too much hair",
-        "shed much hair",          # often used with a negation in the sentence
-        "shed too much hair",
-        "shed much fur",
-        "shed too much fur",
-    ]
-    if any(p in t for p in low_shed_patterns):
-        return 2
-
-    # Explicitly relaxed about shedding
-    if "i don't mind shedding" in t or "shedding is fine" in t:
-        return 4
-
-    return None
+    return traits
 
 
-def _extract_kids(text: str) -> Optional[int]:
-    """Return 5 if kid-friendly desired; 1 if explicitly not; None if not mentioned."""
-    t = text.lower()
+def merge_traits(existing: Dict[str, str], new: Dict[str, str]) -> Dict[str, str]:
+    """
+    Merge new traits into existing traits.
 
-    if not any(w in t for w in ["kid", "kids", "child", "children", "baby", "toddler", "family"]):
-        return None
-
-    yes_words = ["yes", "important", "must", "should", "need", "absolutely", "be good with"]
-    if any(w in t for w in yes_words):
-        return 5
-
-    no_words = ["no", "not important", "doesn't matter", "don't care"]
-    if any(w in t for w in no_words):
-        return 1
-
-    return 5
+    If a trait already exists and the new value is non-empty, overwrite with the new value.
+    """
+    merged = existing.copy()
+    for key, value in new.items():
+        if value is not None and value != "":
+            merged[key] = value
+    return merged
 
 
-# ============================================================
-# PUBLIC API — PARSE USER PREFERENCES
-# ============================================================
-
-def parse_preferences(text: str) -> Dict[str, int]:
-    """Parse user text and return a dictionary of extracted traits."""
-    prefs = {}
-
-    e = _extract_energy(text)
-    if e is not None:
-        prefs["energy"] = e
-
-    h = _extract_home(text)
-    if h is not None:
-        prefs["home"] = h
-
-    a = _extract_allergies(text)
-    if a is not None:
-        prefs["allergies"] = a
-
-    k = _extract_kids(text)
-    if k is not None:
-        prefs["kids"] = k
-
-    return prefs
-
-
-# ============================================================
-# OFF-TOPIC CLASSIFICATION
-# ============================================================
-
-GENERAL_DOG_WORDS = [
-    "dog", "dogs", "breed", "breeds", "puppy", "puppies", "pet",
-    "canine", "walk", "leash", "bark", "coat", "fur"
-]
-
-YES_NO = {
-    "yes", "yes.", "yes!", "yes please", "yes please.",
-    "yep", "yeah", "sure", "of course", "okay", "ok", "ok!",
-    "no", "no.", "no!", "no thanks", "no thank you",
-    "nope", "not really"
-}
-
-
-def classify_off_topic(text: str, extracted: dict) -> bool:
+def classify_off_topic(message: str) -> bool:
     """
     Return True only if the message is genuinely off-topic.
 
-    A message is OFF TOPIC only if:
-    - No new traits were extracted
-    - AND it does not match any dog/lifestyle keywords
-    - AND it is not a simple confirmation (yes/no/ok/etc.)
+    A message is considered ON-TOPIC if:
+      - It mentions dogs, breeds, lifestyle, or traits we care about, or
+      - It is a simple confirmation like 'yes', 'no', 'sure', etc.
+
+    Everything else defaults to ON-TOPIC unless it clearly mentions unrelated domains.
     """
+    msg = message.lower().strip()
 
-    t = text.lower().strip()
-
-    # If any trait was extracted → topic is valid
-    if extracted:
+    # Simple confirmations should never be treated as off-topic
+    confirmations = [
+        "yes", "yep", "yeah", "sure", "ok", "okay",
+        "sounds good", "fine", "correct", "that's right"
+    ]
+    if msg in confirmations:
         return False
 
-    # Accept simple confirmations as valid
-    confirmations = ["yes", "yep", "yeah", "sure", "ok", "okay", "that's fine",
-                     "sounds good", "fine", "alright", "go ahead"]
-    if any(t.startswith(c) for c in confirmations):
-        return False
-
-    # Dog-related keywords that still count as on-topic
     dog_keywords = [
         "dog", "puppy", "breed", "shedding", "hair", "fur",
-        "energy", "calm", "quiet", "active", "yard",
-        "apartment", "house", "kids", "children",
-        "family", "allergy", "allergies", "hypoallergenic"
+        "energy", "calm", "quiet", "active",
+        "apartment", "house", "yard", "garden",
+        "kids", "children", "family",
+        "allergy", "allergies", "hypoallergenic"
     ]
-    if any(k in t for k in dog_keywords):
+    if any(k in msg for k in dog_keywords):
         return False
 
-    # Otherwise off-topic
-    return True
+    # Strong unrelated-topic keywords → off-topic
+    unrelated = [
+        "bitcoin", "crypto", "stock", "stocks", "recipe",
+        "politics", "election", "war", "galaxy", "universe",
+        "math problem", "code this", "programming"
+    ]
+    if any(w in msg for w in unrelated):
+        return True
 
-
-# ============================================================
-# HUMAN-FRIENDLY MEMORY SUMMARY
-# ============================================================
-
-def summarize_preferences(prefs: Dict[str, int]) -> str:
-    if not prefs:
-        return ("Tell me about your activity level, home size, allergies, "
-                "or whether you have kids — I’ll learn as we chat!")
-
-    parts = []
-
-    if (e := prefs.get("energy")) is not None:
-        parts.append(
-            "You prefer a calmer dog." if e <= 2 else
-            "You’re okay with medium energy." if e == 3 else
-            "You want a high-energy, active dog."
-        )
-
-    if (h := prefs.get("home")) is not None:
-        parts.append(
-            "You live in an apartment or smaller space." if h <= 2 else
-            "You have more space, like a house or yard."
-        )
-
-    if (a := prefs.get("allergies")) is not None:
-        parts.append(
-            "Low-shedding or hypoallergenic coats matter to you." if a <= 2 else
-            "You’re flexible about shedding."
-        )
-
-    if (k := prefs.get("kids")) is not None:
-        parts.append(
-            "Good with young children is important." if k >= 4 else
-            "Kid-friendliness is less critical."
-        )
-
-    return " ".join(parts)
+    # Default: assume on-topic to be safe
+    return False
