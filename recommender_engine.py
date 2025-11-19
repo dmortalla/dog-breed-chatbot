@@ -158,24 +158,34 @@ def folder_for_breed(breed: str) -> Optional[str]:
 
 
 def image_url_for_breed(breed: str) -> Optional[str]:
-    """Return a raw GitHub URL for 1.jpg in this breed's folder.
-
-    Args:
-        breed: Breed name.
-
-    Returns:
-        URL string or None if no folder exists.
-    """
+    """Return a raw GitHub URL for Image_1.jpg in this breed's folder."""
     folder = folder_for_breed(breed)
     if folder is None:
         return None
 
-    # The folder name may contain spaces or special characters,
-    # so we URL-encode it.
     from urllib.parse import quote
 
     encoded_folder = quote(folder, safe="")
-    return f"{RAW_BASE}/{encoded_folder}/1.jpg"
+
+    # Try common filename variants used in the dataset
+    possible_files = [
+        "Image_1.jpg",
+        "Image_1.JPG",
+        "image_1.jpg",
+        "image_1.JPG",
+    ]
+
+    for fname in possible_files:
+        url = f"{RAW_BASE}/{encoded_folder}/{fname}"
+        # Do a HEAD request to check existence
+        try:
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=5):
+                return url
+        except Exception:
+            continue
+
+    return None
 
 
 def folder_url_for_breed(breed: str) -> Optional[str]:
