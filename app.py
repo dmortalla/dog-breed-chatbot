@@ -1,289 +1,528 @@
-"""Streamlit app for the Dog Breed Matchmaker.
+"""
+Streamlit app: "Choose My Dog Breed"
 
-This app has two modes:
-
-1. ⚡ Quick Match:
-   - Uses easy dropdowns to describe your lifestyle.
-   - Recommends top 3 dog breeds with photos + dataset links.
-
-2. 💬 Chatbot Mode:
-   - Rule-based natural-language chatbot.
-   - Asks questions and builds a profile from conversation.
+This app:
+- Loads dog breed traits and trait descriptions from local CSV files.
+- Lets users set preferences via sidebar dropdowns (Quick Match).
+- Provides a simple natural-language chatbot interface.
+- Recommends the top 3 matching breeds.
+- Shows a sample image for each breed from the GitHub Dog-Breeds-Dataset fork.
+- Links to the full folder of images for each breed on GitHub.
 """
 
-from typing import Dict, List
+from __future__ import annotations
 
+import random
+import textwrap
+import urllib.parse
+from typing import Dict, List, Tuple
+
+import numpy as np
 import pandas as pd
 import streamlit as st
 
-from recommender_engine import (
-    clean_breed_traits,
-    compute_match_scores,
-    get_breed_image_url,
-    build_image_url,
+
+# ---------------------------------------------------------------------
+# CONFIG
+# ---------------------------------------------------------------------
+
+# GitHub repo where the images live (your fork)
+GITHUB_USER = "maartenvandenbroeck"
+GITHUB_REPO = "Dog-Breeds-Dataset"
+GITHUB_BRANCH = "master"  # this repo uses "master", not "main"
+
+# Base URLs for folders (web view) and raw image files
+GITHUB_DATASET_BASE = (
+    f"https://github.com/{GITHUB_USER}/{GITHUB_REPO}/tree/{GITHUB_BRANCH}"
+)
+GITHUB_RAW_BASE = (
+    f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}"
 )
 
 
-# -------------------------------------------------------------------
-# Load Data
-# -------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# DATA LOADING
+# ---------------------------------------------------------------------
+
+
 @st.cache_data
-def load_breed_data() -> pd.DataFrame:
-    """Load dog breed traits from CSV."""
-    return pd.read_csv("data/breed_traits.csv")
+def load_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Load breed traits and trait description tables.
 
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame]: (dog_breeds, trait_descriptions)
+    """
+    dog_breeds = pd.read_csv("data/breed_traits.csv")
+    trait_descriptions = pd.read_csv("data/trait_description.csv")
 
-# -------------------------------------------------------------------
-# Dropdown Utility
-# -------------------------------------------------------------------
-def dropdown(label: str) -> int:
-    """Convert a human-friendly dropdown option into an integer (1–5)."""
-    options = {
-        "Very Low (1)": 1,
-        "Low (2)": 2,
-        "Medium (3)": 3,
-        "High (4)": 4,
-        "Very High (5)": 5,
-    }
-    choice = st.sidebar.selectbox(label, list(options.keys()))
-    return options[choice]
-
-
-# -------------------------------------------------------------------
-# QUICK MATCH (Dropdown Version)
-# -------------------------------------------------------------------
-def build_user_profile_from_sidebar() -> Dict[str, int]:
-    """Use dropdowns instead of sliders for Quick Match."""
-
-    st.sidebar.header("🐾 Your Lifestyle & Preferences")
-
-    user_profile = {
-        "Energy Level": dropdown("Your activity level:"),
-        "Good With Young Children": dropdown("Good with young children:"),
-        "Good With Other Dogs": dropdown("Friendly with other dogs:"),
-        "Shedding Level": dropdown("Shedding tolerance:"),
-        "Barking Level": dropdown("Barking tolerance:"),
-        "Openness To Strangers": dropdown("Friendliness with strangers:"),
-    }
-
-    return user_profile
-
-
-# -------------------------------------------------------------------
-# Chatbot Helpers
-# -------------------------------------------------------------------
-def parse_level_answer(text: str) -> int:
-    """Convert free-text description to 1–5."""
-    if not text:
-        return 3
-
-    text = text.lower()
-
-    if text[0].isdigit():
-        num = int(text[0])
-        return max(1, min(5, num))
-
-    if "very low" in text:
-        return 1
-    if "low" in text:
-        return 2
-    if "medium" in text:
-        return 3
-    if "high" in text:
-        return 4
-    if "very high" in text:
-        return 5
-
-    return 3
-
-
-def build_user_profile_from_chat(answers: Dict[str, str]) -> Dict[str, int]:
-    """Infer profile values from natural language chatbot responses."""
-    return {
-        "Energy Level": parse_level_answer(answers.get("energy", "")),
-        "Good With Young Children": (
-            5 if "kid" in answers.get("kids", "").lower() else 3
-        ),
-        "Good With Other Dogs": (
-            5 if "yes" in answers.get("other_dogs", "").lower() else 3
-        ),
-        "Shedding Level": (
-            1 if "allerg" in answers.get("shedding", "").lower() else parse_level_answer(answers.get("shedding", ""))
-        ),
-        "Barking Level": parse_level_answer(answers.get("barking", "")),
-        "Openness To Strangers": parse_level_answer(answers.get("strangers", "")),
-    }
-
-
-# -------------------------------------------------------------------
-# Display Breed Recommendation Card
-# -------------------------------------------------------------------
-def display_breed_card(rank: int, row: pd.Series) -> None:
-    """Render a nicely formatted breed card."""
-    breed = row["Breed"]
-    score = float(row["score"])
-
-    st.subheader(f"#{rank} — {breed}  (Match Score: {score:.1f})")
-
-    image_url = get_breed_image_url(breed)
-    folder_url = build_image_url(breed)
-
-    st.image(image_url, width=320, caption=breed)
-    st.markdown(f"[View more **{breed}** photos in dataset]({folder_url})")
-
-    traits_to_show = [
-        ("Energy Level", "Energy Level"),
-        ("Good With Young Children", "Good with Children"),
-        ("Good With Other Dogs", "Good with Other Dogs"),
-        ("Shedding Level", "Shedding Level"),
-        ("Barking Level", "Barking Level"),
+    # Convert numeric traits stored as text to floats (1–5 scale)
+    numeric_cols = [
+        "Affectionate With Family",
+        "Good With Young Children",
+        "Good With Other Dogs",
+        "Shedding Level",
+        "Coat Grooming Frequency",
+        "Drooling Level",
+        "Openness To Strangers",
+        "Playfulness Level",
+        "Watchdog/Protective Nature",
+        "Adaptability Level",
+        "Trainability Level",
+        "Energy Level",
+        "Barking Level",
+        "Mental Stimulation Needs",
     ]
+    for col in numeric_cols:
+        if col in dog_breeds.columns:
+            dog_breeds[col] = pd.to_numeric(dog_breeds[col], errors="coerce")
 
-    st.write("**Why this breed might fit you:**")
-    bullets = []
-    for col, label in traits_to_show:
-        if col in row and not pd.isna(row[col]):
-            bullets.append(f"- **{label}**: {int(row[col])}/5")
-
-    st.markdown("\n".join(bullets))
-    st.markdown("---")
+    return dog_breeds, trait_descriptions
 
 
-# -------------------------------------------------------------------
-# QUICK MATCH TAB
-# -------------------------------------------------------------------
-def render_quick_match(clean_df: pd.DataFrame) -> None:
-    st.subheader("⚡ Quick Match")
+# ---------------------------------------------------------------------
+# IMAGE HELPERS (PATCHED)
+# ---------------------------------------------------------------------
 
-    st.write("Select your preferences on the left and click the button.")
 
-    profile = build_user_profile_from_sidebar()
+def _breed_folder_name(breed_name: str) -> str:
+    """Convert a human breed name into the folder name used in the repo.
 
-    if st.button("✨ Show My Top 3 Breeds", key="quick_btn"):
-        results = compute_match_scores(clean_df, profile)
-        top3 = results.head(3)
+    The repo folders follow a pattern like:
+    - "Rhodesian Ridgebacks"  -> "rhodesian ridgeback dog"
+    - "Anatolian Shepherd Dogs" -> "anatolian shepherd dog"
 
-        st.markdown("## 🎯 Your Top Matches")
-        for i, (_, row) in enumerate(top3.iterrows(), start=1):
-            display_breed_card(i, row)
+    Args:
+        breed_name: Breed name from the CSV.
+
+    Returns:
+        Folder name string (still with spaces; will be URL-encoded later).
+    """
+    name = breed_name.strip().lower()
+
+    # Remove trailing "dogs" or "dog" then append " dog"
+    if name.endswith("dogs"):
+        name = name[:-1]  # drop the final "s"
+    elif name.endswith("dog"):
+        pass
     else:
-        st.info("Adjust dropdowns on the left and click the button to see results.")
+        name = f"{name} dog"
+
+    return name
 
 
-# -------------------------------------------------------------------
-# CHATBOT MODE
-# -------------------------------------------------------------------
-def init_chat_state():
-    if "chat_messages" not in st.session_state:
-        st.session_state.chat_messages = []
-    if "chat_step" not in st.session_state:
-        st.session_state.chat_step = 0
-    if "chat_answers" not in st.session_state:
-        st.session_state.chat_answers = {}
+def build_dataset_folder_url(breed_name: str) -> str:
+    """Build the GitHub web URL for the folder containing this breed's images.
+
+    Args:
+        breed_name: Breed name from the trait table.
+
+    Returns:
+        A URL string pointing to the correct folder on GitHub.
+    """
+    folder = _breed_folder_name(breed_name)
+    # Encode spaces and special characters for a safe URL path segment
+    encoded_folder = urllib.parse.quote(folder, safe="")
+    return f"{GITHUB_DATASET_BASE}/{encoded_folder}"
 
 
-def render_chatbot(clean_df: pd.DataFrame) -> None:
-    st.subheader("💬 Chatbot Mode")
+def get_breed_image_url(breed_name: str, index: int | None = None) -> str:
+    """Build the raw image URL for Streamlit to display.
 
-    init_chat_state()
-    msgs = st.session_state.chat_messages
-    step = st.session_state.chat_step
-    ans = st.session_state.chat_answers
+    The dataset stores about 35 images per breed, typically named "1.jpg",
+    "2.jpg", ..., "35.jpg". We pick one index (or a random one) and build
+    a raw.githubusercontent.com URL.
 
-    questions = [
-        ("energy", "How would you describe your daily activity level? (low/medium/high)"),
-        ("kids", "Do you live with young children?"),
-        ("other_dogs", "Do you have other dogs at home?"),
-        ("shedding", "How do you feel about shedding? Any allergies?"),
-        ("barking", "How much barking can you tolerate?"),
-        ("strangers", "Do you prefer a friendly or reserved dog with strangers?"),
-    ]
+    Args:
+        breed_name: Breed name from the trait table.
+        index: Optional image index (1–35). If None, choose randomly.
 
-    # Display existing messages
-    for m in msgs:
-        with st.chat_message(m["role"]):
-            st.markdown(m["content"])
+    Returns:
+        A URL string for a JPG image. If the image does not exist, the
+        browser may show a broken image, but the app will still run.
+    """
+    if index is None:
+        index = random.randint(1, 35)
 
-    # Greeting
-    if step == 0 and not msgs:
-        greet = (
-            "Hello! I'm your Dog Matchmaker chatbot 🐾\n\n"
-            "I'll ask you a few questions to help find the perfect dog breed."
-        )
-        msgs.append({"role": "assistant", "content": greet})
-        with st.chat_message("assistant"):
-            st.markdown(greet)
+    folder = _breed_folder_name(breed_name)
+    encoded_folder = urllib.parse.quote(folder, safe="")
+    filename = f"{index}.jpg"
 
-        # Ask first question
-        msgs.append({"role": "assistant", "content": questions[0][1]})
-        with st.chat_message("assistant"):
-            st.markdown(questions[0][1])
+    return f"{GITHUB_RAW_BASE}/{encoded_folder}/{filename}"
 
-    user_input = st.chat_input("Type your answer...")
 
-    if user_input:
-        msgs.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
+# ---------------------------------------------------------------------
+# MATCHING LOGIC
+# ---------------------------------------------------------------------
 
-        # Save answer
-        if step < len(questions):
-            key = questions[step][0]
-            ans[key] = user_input
 
-        step += 1
-        st.session_state.chat_step = step
+PREFERENCE_TRAITS = {
+    "Energy Level": "Energy Level",
+    "Good With Young Children": "Good With Young Children",
+    "Shedding Level": "Shedding Level",
+    "Barking Level": "Barking Level",
+    "Trainability Level": "Trainability Level",
+    "Affectionate With Family": "Affectionate With Family",
+}
 
-        if step < len(questions):
-            next_q = questions[step][1]
-            msgs.append({"role": "assistant", "content": next_q})
-            with st.chat_message("assistant"):
-                st.markdown(next_q)
+
+def score_breeds(
+    dog_breeds: pd.DataFrame, prefs: Dict[str, int], weights: Dict[str, float]
+) -> pd.DataFrame:
+    """Score each breed against user preferences on a 0–100 scale.
+
+    Args:
+        dog_breeds: Full trait table.
+        prefs: Mapping trait name -> desired level (1–5).
+        weights: Mapping trait name -> importance weight (0–1).
+
+    Returns:
+        DataFrame sorted by descending score with columns:
+        ['Breed', 'score', 'details'] where details is a dict of per-trait info.
+    """
+    df = dog_breeds.copy()
+    total_weight = sum(weights.values()) or 1.0
+
+    scores = []
+    details_list: List[Dict[str, Dict[str, float]]] = []
+
+    for _, row in df.iterrows():
+        breed_score = 0.0
+        details: Dict[str, Dict[str, float]] = {}
+
+        for pretty_name, col_name in PREFERENCE_TRAITS.items():
+            if pretty_name not in prefs:
+                continue
+            desired = prefs[pretty_name]
+            weight = weights.get(pretty_name, 0.0)
+            trait_value = row.get(col_name, np.nan)
+
+            if np.isnan(trait_value):
+                diff = 2.5  # neutral penalty if data missing
+            else:
+                diff = abs(trait_value - desired)
+
+            # Max diff on a 1–5 scale is 4. Convert to a 0–1 match.
+            match = max(0.0, 1.0 - diff / 4.0)
+            weighted = match * weight
+
+            breed_score += weighted
+            details[pretty_name] = {
+                "desired": desired,
+                "actual": float(trait_value) if not np.isnan(trait_value) else np.nan,
+                "match": match,
+                "weight": weight,
+            }
+
+        # Convert total weighted match into 0–100
+        score_pct = (breed_score / total_weight) * 100.0
+        scores.append(score_pct)
+        details_list.append(details)
+
+    df["score"] = scores
+    df["details"] = details_list
+
+    return df[["Breed", "score", "details"]].sort_values("score", ascending=False)
+
+
+def explain_match(details: Dict[str, Dict[str, float]]) -> List[str]:
+    """Create simple bullet-point explanations from trait match details."""
+    lines: List[str] = []
+
+    for trait, info in details.items():
+        match = info["match"]
+        actual = info["actual"]
+        desired = info["desired"]
+
+        if np.isnan(actual):
+            lines.append(f"- No data available for **{trait}**.")
+            continue
+
+        if match > 0.8:
+            lines.append(
+                f"- Excellent **{trait.lower()}** match (you wanted {desired}, "
+                f"this breed is around {int(round(actual))})."
+            )
+        elif match > 0.6:
+            lines.append(
+                f"- Good **{trait.lower()}** match (you wanted {desired}, "
+                f"this breed is about {int(round(actual))})."
+            )
+        elif match > 0.4:
+            lines.append(
+                f"- Moderate match on **{trait.lower()}** "
+                f"(your preference {desired} vs. breed {int(round(actual))})."
+            )
         else:
-            profile = build_user_profile_from_chat(ans)
-            results = compute_match_scores(clean_df, profile)
-            top3 = results.head(3)
+            lines.append(
+                f"- This breed differs on **{trait.lower()}** "
+                f"(you prefer {desired}, this breed is {int(round(actual))})."
+            )
 
-            summary = "Here are your best matches:\n\n"
-            for _, row in top3.iterrows():
-                breed = row["Breed"]
-                score = float(row["score"])
-                url = build_image_url(breed)
-                summary += f"- **{breed}** — {score:.1f}\n  [Photos]({url})\n"
-
-            msgs.append({"role": "assistant", "content": summary})
-            with st.chat_message("assistant"):
-                st.markdown(summary)
-
-            st.info("Refresh the page to restart the chat.")
+    return lines
 
 
-# -------------------------------------------------------------------
-# MAIN
-# -------------------------------------------------------------------
-def main():
+# ---------------------------------------------------------------------
+# SIMPLE CHATBOT INTENT PARSER
+# ---------------------------------------------------------------------
+
+
+def parse_chat_message_to_preferences(message: str) -> Dict[str, int]:
+    """Very simple keyword-based parser to update preferences from chat text.
+
+    This is *not* a real NLP model, just a friendly rules-based helper.
+
+    Args:
+        message: User message.
+
+    Returns:
+        Dict of trait -> preferred level (1–5) inferred from text.
+    """
+    text = message.lower()
+    prefs: Dict[str, int] = {}
+
+    # Energy
+    if any(k in text for k in ["high energy", "very active", "run", "jogging"]):
+        prefs["Energy Level"] = 5
+    elif any(k in text for k in ["medium energy", "moderate energy"]):
+        prefs["Energy Level"] = 3
+    elif any(k in text for k in ["low energy", "couch", "chill", "apartment"]):
+        prefs["Energy Level"] = 2
+
+    # Kids
+    if any(k in text for k in ["kids", "children", "family"]):
+        prefs["Good With Young Children"] = 5
+    if "no kids" in text or "no children" in text:
+        prefs["Good With Young Children"] = 2
+
+    # Shedding
+    if "hypoallergenic" in text or "allergy" in text:
+        prefs["Shedding Level"] = 1
+    elif "okay with shedding" in text or "don't mind fur" in text:
+        prefs["Shedding Level"] = 4
+
+    # Barking
+    if any(k in text for k in ["quiet", "noise sensitive", "noisy neighbors"]):
+        prefs["Barking Level"] = 2
+    if "guard dog" in text or "watchdog" in text:
+        prefs["Watchdog/Protective Nature"] = 5
+
+    # Trainability
+    if any(k in text for k in ["first dog", "easy to train", "beginner"]):
+        prefs["Trainability Level"] = 5
+
+    return prefs
+
+
+# ---------------------------------------------------------------------
+# UI HELPERS
+# ---------------------------------------------------------------------
+
+
+def render_breed_card(
+    breed_row: pd.Series,
+    rank: int,
+) -> None:
+    """Render a single breed result card with image, score, and explanation."""
+    breed_name = breed_row["Breed"]
+    score = breed_row["score"]
+    details = breed_row["details"]
+
+    image_url = get_breed_image_url(breed_name)
+    folder_url = build_dataset_folder_url(breed_name)
+
+    st.subheader(f"#{rank} — {breed_name} (Match Score: {score:.1f}/100)")
+
+    cols = st.columns([1.2, 2.8])
+    with cols[0]:
+        st.image(
+            image_url,
+            caption=breed_name,
+            use_column_width=True,
+        )
+
+    with cols[1]:
+        st.markdown(
+            f"[View more **{breed_name}** photos in dataset]({folder_url})"
+        )
+        st.write("**Why this breed might fit you:**")
+        for line in explain_match(details):
+            st.markdown(line)
+
+        # Short social-media-style blurb
+        blurb = textwrap.fill(
+            f"{breed_name} could be your next adventure buddy! 🐶 "
+            f"It balances energy, trainability, and family-friendliness "
+            f"based on the preferences you shared.",
+            width=80,
+        )
+        st.write("")
+        st.markdown(f"> {blurb}")
+
+
+def sidebar_preference_controls() -> Tuple[Dict[str, int], Dict[str, float]]:
+    """Render sidebar dropdowns and return (preferences, weights)."""
+    st.sidebar.header("⚡ Quick Match Controls")
+
+    st.sidebar.write("Choose the vibe you want, then click **Find my breeds!**")
+
+    levels = ["No preference", "1 (Very low)", "2 (Low)", "3 (Medium)", "4 (High)", "5 (Very high)"]
+
+    def choose_level(label: str, default: str = "No preference") -> int | None:
+        choice = st.sidebar.selectbox(label, levels, index=levels.index(default))
+        if choice == "No preference":
+            return None
+        return int(choice[0])
+
+    prefs: Dict[str, int] = {}
+    weights: Dict[str, float] = {}
+
+    # User controls
+    energy = choose_level("Energy level")
+    kids = choose_level("Good with young children")
+    shedding = choose_level("Shedding / allergies")
+    barking = choose_level("Barking level")
+    train = choose_level("Trainability / ease of training")
+    affection = choose_level("Affectionate with family")
+
+    # Assign preferences + weights (importance)
+    if energy is not None:
+        prefs["Energy Level"] = energy
+        weights["Energy Level"] = 1.0
+    if kids is not None:
+        prefs["Good With Young Children"] = kids
+        weights["Good With Young Children"] = 1.0
+    if shedding is not None:
+        prefs["Shedding Level"] = shedding
+        weights["Shedding Level"] = 0.9
+    if barking is not None:
+        prefs["Barking Level"] = barking
+        weights["Barking Level"] = 0.7
+    if train is not None:
+        prefs["Trainability Level"] = train
+        weights["Trainability Level"] = 0.9
+    if affection is not None:
+        prefs["Affectionate With Family"] = affection
+        weights["Affectionate With Family"] = 0.8
+
+    if not prefs:
+        # Default gentle preferences if user leaves everything as "No preference"
+        prefs = {"Energy Level": 3, "Affectionate With Family": 4}
+        weights = {"Energy Level": 1.0, "Affectionate With Family": 0.8}
+
+    return prefs, weights
+
+
+# ---------------------------------------------------------------------
+# MAIN APP
+# ---------------------------------------------------------------------
+
+
+def main() -> None:
+    """Run the Streamlit app."""
     st.set_page_config(
-        page_title="Dog Breed Matchmaker",
+        page_title="Choose My Dog Breed",
         page_icon="🐕",
-        layout="centered",
+        layout="wide",
     )
 
-    st.title("🐕 Dog Breed Matchmaker")
-    st.write(
-        "Use **Quick Match** for fast dropdown-based recommendations, or "
-        "**Chatbot Mode** for natural conversation."
+    dog_breeds, trait_descriptions = load_data()  # noqa: F841 (trait_descriptions unused for now)
+
+    st.title("🐕 Choose My Dog Breed")
+    st.markdown(
+        """
+Welcome to your personal **AI dog matchmaker**!
+
+This app:
+- Asks about your lifestyle and preferences,
+- Matches them to real dog breed traits,
+- Suggests your **top 3 breeds** with photos and explanations,
+- And includes a simple **chatbot** to refine your choices.
+"""
     )
 
-    raw_df = load_breed_data()
-    clean_df = clean_breed_traits(raw_df)
+    # Sidebar controls
+    prefs_sidebar, weights_sidebar = sidebar_preference_controls()
 
-    quick_tab, chat_tab = st.tabs(["⚡ Quick Match", "💬 Chatbot Mode"])
+    tab_quick, tab_chat = st.tabs(["⚡ Quick Match", "💬 Chatbot Mode"])
 
-    with quick_tab:
-        render_quick_match(clean_df)
+    # ------------- QUICK MATCH TAB -------------
+    with tab_quick:
+        st.header("⚡ Quick Match (Sidebar Controls)")
+        st.write(
+            "Use the controls in the **left sidebar** to describe your ideal pup, "
+            "then click the button below."
+        )
 
-    with chat_tab:
-        render_chatbot(clean_df)
+        if st.button("🎯 Find my top 3 breeds", type="primary"):
+            results = score_breeds(dog_breeds, prefs_sidebar, weights_sidebar)
+            top3 = results.head(3).reset_index(drop=True)
+
+            st.subheader("🎉 Your Top Matches (with photos)")
+            for idx, row in top3.iterrows():
+                render_breed_card(row, rank=idx + 1)
+
+    # ------------- CHATBOT TAB -------------
+    with tab_chat:
+        st.header("💬 Chatbot: Talk about your lifestyle")
+
+        st.write(
+            """
+Tell the bot about your lifestyle and what you're looking for in a dog.
+For example:
+
+> *\"I live in an apartment, want a low-shedding, medium-energy dog that's good with kids.\"*
+"""
+        )
+
+        # Keep a simple chat history in session_state
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = []
+
+        for speaker, text in st.session_state.chat_history:
+            if speaker == "user":
+                st.chat_message("user").markdown(text)
+            else:
+                st.chat_message("assistant").markdown(text)
+
+        user_msg = st.chat_input("Tell me about yourself and your ideal dog...")
+        if user_msg:
+            # Show user message
+            st.chat_message("user").markdown(user_msg)
+            st.session_state.chat_history.append(("user", user_msg))
+
+            # Infer preferences from this message
+            inferred_prefs = parse_chat_message_to_preferences(user_msg)
+
+            # Merge with sidebar prefs (chat overrides where it has info)
+            combined_prefs = dict(prefs_sidebar)
+            combined_prefs.update(inferred_prefs)
+
+            combined_weights = dict(weights_sidebar)
+
+            # Boost weights for any traits mentioned explicitly in chat
+            for trait in inferred_prefs:
+                combined_weights[trait] = max(combined_weights.get(trait, 0.6), 1.0)
+
+            # Compute recommendations
+            results = score_breeds(dog_breeds, combined_prefs, combined_weights)
+            top3 = results.head(3).reset_index(drop=True)
+
+            # Compose a short assistant reply
+            first_breed = top3.loc[0, "Breed"]
+            reply = (
+                f"Based on what you described, **{first_breed}** looks like a strong match! "
+                "Here are the top 3 breeds for you below. You can tweak the sidebar "
+                "controls and send more messages to refine your results. 🐾"
+            )
+
+            st.chat_message("assistant").markdown(reply)
+            st.session_state.chat_history.append(("assistant", reply))
+
+            st.divider()
+            st.subheader("🎉 Recommended breeds based on our chat")
+
+            for idx, row in top3.iterrows():
+                render_breed_card(row, rank=idx + 1)
 
 
 if __name__ == "__main__":
