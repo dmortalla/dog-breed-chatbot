@@ -108,7 +108,6 @@ if not st.session_state.get("intro_shown", False):
         "and a short ‘social-post-style’ description.\n\n"
         "**Let's start with your energy level.** Select one from the options shown in the drop-down menu below."
     )
-    add_assistant_msg(intro)
     st.chat_message("assistant").markdown(intro)
     st.session_state.intro_shown = True
 
