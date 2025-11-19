@@ -1,5 +1,9 @@
 from __future__ import annotations
+
 from typing import Dict, Tuple
+import random
+import time
+
 import streamlit as st
 
 from recommender_engine import (
@@ -10,27 +14,70 @@ from recommender_engine import (
     explain_match,
 )
 
+# Try to enable optional voice input if the package is available.
+try:  # Optional dependency
+    from streamlit_mic_recorder import mic_recorder  # type: ignore[import]
+    HAS_MIC = True
+except Exception:  # noqa: BLE001
+    HAS_MIC = False
+
+
+# ============================================================
+#  DOG FACTS
+# ============================================================
+DOG_FACTS = [
+    "Dogs have about 300 million scent receptors, compared to around 6 million in humans.",
+    "A dog’s nose print is unique—just like a human fingerprint.",
+    "Many dogs dream during sleep; you can sometimes see their paws twitching.",
+    "Some breeds, like the Basenji, rarely bark but can yodel!",
+    "Puppies are born deaf and blind, and develop senses as they grow.",
+    "Dogs can understand hundreds of words and gestures with training.",
+]
+
+
 # ============================================================
 #  IRRELEVANT MESSAGE DETECTION
 # ============================================================
 def is_irrelevant(message: str) -> bool:
-    """
-    Detects whether the message contains ANY meaningful dog-related
-    preference traits. If not, it's considered irrelevant.
-
-    Returns True = irrelevant.
-    """
+    """Return True if the message does not look related to dog traits/lifestyle."""
     text = message.lower()
 
     trait_keywords = [
-        "energy", "active", "run", "jog", "walk",
-        "kids", "children", "family",
-        "apartment", "yard", "home",
-        "allergy", "shedding", "hypoallergenic",
-        "quiet", "barking",
-        "train", "trainable", "easy to train",
-        "affection", "cuddly", "independent",
-        "calm", "relaxed", "chill",
+        "energy",
+        "active",
+        "run",
+        "jog",
+        "walk",
+        "kids",
+        "children",
+        "family",
+        "toddler",
+        "baby",
+        "apartment",
+        "yard",
+        "garden",
+        "home",
+        "house",
+        "allergy",
+        "shedding",
+        "hypoallergenic",
+        "fur",
+        "quiet",
+        "barking",
+        "noise",
+        "train",
+        "trainable",
+        "obedient",
+        "affection",
+        "cuddly",
+        "lap dog",
+        "independent",
+        "calm",
+        "relaxed",
+        "chill",
+        "guard dog",
+        "watchdog",
+        "protective",
     ]
 
     return not any(keyword in text for keyword in trait_keywords)
@@ -40,12 +87,13 @@ def is_irrelevant(message: str) -> bool:
 #  TRAIT PARSING ENGINE
 # ============================================================
 def _level_from_words(text: str) -> int | None:
+    """Map phrases like 'low/medium/high' to a 1–5 scale."""
     text = text.lower()
     if "very low" in text:
         return 1
     if "low" in text:
         return 2
-    if "medium" in text or "moderate" in text:
+    if "medium" in text or "moderate" in text or "average" in text:
         return 3
     if "very high" in text:
         return 5
@@ -57,11 +105,12 @@ def _level_from_words(text: str) -> int | None:
 def infer_preferences_from_message(
     message: str, pending_key: str | None
 ) -> Tuple[Dict[str, int], Dict[str, float]]:
+    """Infer trait preferences and weights from a user message."""
     text = message.lower()
-    prefs = {}
-    weights = {}
+    prefs: Dict[str, int] = {}
+    weights: Dict[str, float] = {}
 
-    # --- Pending trait handling first ---
+    # ---------- Answering a pending follow-up question ----------
     if pending_key is not None:
         lvl = _level_from_words(text)
         yes = any(w in text for w in ["yes", "yeah", "yep"])
@@ -101,52 +150,52 @@ def infer_preferences_from_message(
 
         return prefs, weights
 
-    # --------------------------------------------------------
-    # GENERAL FREE-TEXT PARSING (no pending trait)
-    # --------------------------------------------------------
-
+    # ---------- General free-text parsing (no pending trait) ----------
     # Energy
     if any(k in text for k in ["very active", "marathon", "trail run"]):
         prefs["Energy Level"] = 5
         weights["Energy Level"] = 1.0
-    elif any(k in text for k in ["active", "run", "jog", "hike"]):
+    elif any(k in text for k in ["active", "run", "jog", "hike", "gym"]):
         prefs["Energy Level"] = 4
         weights["Energy Level"] = 0.9
     elif "medium energy" in text:
         prefs["Energy Level"] = 3
         weights["Energy Level"] = 0.8
-    elif any(k in text for k in ["low energy", "relaxed", "chill"]):
+    elif any(k in text for k in ["low energy", "relaxed", "chill", "couch"]):
         prefs["Energy Level"] = 2
         weights["Energy Level"] = 0.9
 
-    # Kids
-    if any(k in text for k in ["kids", "children", "toddler", "baby"]):
+    # Kids / family
+    if any(k in text for k in ["kids", "children", "toddler", "baby", "family"]):
         prefs["Good With Young Children"] = 5
         weights["Good With Young Children"] = 1.0
 
-    # Allergies
-    if any(k in text for k in ["allergy", "hypoallergenic", "allergic"]):
+    # Allergies / shedding
+    if any(k in text for k in ["allergy", "allergies", "hypoallergenic", "allergic"]):
         prefs["Shedding Level"] = 1
         weights["Shedding Level"] = 1.0
 
-    # Barking
-    if any(k in text for k in ["quiet", "no barking"]):
+    # Barking / noise
+    if any(k in text for k in ["quiet", "no barking", "noise sensitive"]):
         prefs["Barking Level"] = 2
         weights["Barking Level"] = 0.9
 
     # Trainability
-    if any(k in text for k in ["easy to train", "first dog"]):
+    if any(k in text for k in ["easy to train", "first dog", "beginner"]):
         prefs["Trainability Level"] = 5
         weights["Trainability Level"] = 0.9
 
     # Affection
-    if any(k in text for k in ["cuddly", "affectionate"]):
+    if any(k in text for k in ["cuddly", "affectionate", "lap dog"]):
         prefs["Affectionate With Family"] = 5
         weights["Affectionate With Family"] = 0.9
+    if any(k in text for k in ["independent", "not clingy"]):
+        prefs["Affectionate With Family"] = 3
+        weights["Affectionate With Family"] = 0.7
 
-    # Space / Home
+    # Space / home
     if "apartment" in text:
-        prefs["Energy Level"] = prefs.get("Energy Level", 3)  # nudging
+        prefs.setdefault("Energy Level", 3)
         weights["Energy Level"] = max(weights.get("Energy Level", 0.8), 0.8)
 
     return prefs, weights
@@ -165,16 +214,17 @@ FOLLOWUP_ORDER = [
 ]
 
 FOLLOWUP_QUESTIONS = {
-    "Energy Level": "How energetic would you like your dog — low, medium, or high?",
-    "Shedding Level": "Do you prefer low-shedding or hypoallergenic dogs?",
-    "Good With Young Children": "Should your dog be good with young children? (yes/no)",
-    "Barking Level": "How much barking is okay — low, medium, or high?",
-    "Trainability Level": "How important is trainability — low, medium, or high?",
-    "Affectionate With Family": "Would you like a very affectionate dog or a more independent one?",
+    "Energy Level": "How energetic would you like your dog — **low**, **medium**, or **high**?",
+    "Shedding Level": "Do you prefer **low-shedding or hypoallergenic** dogs?",
+    "Good With Young Children": "Should your dog be especially good with **young children**? (yes/no)",
+    "Barking Level": "How much **barking** is okay — low, medium, or high?",
+    "Trainability Level": "How important is **trainability** — low, medium, or high?",
+    "Affectionate With Family": "Would you like a very **affectionate** dog or a more independent one (low/medium/high)?",
 }
 
 
 def next_missing_trait(prefs: Dict[str, int]) -> str | None:
+    """Return the next trait we should ask about, or None if all covered."""
     for trait in FOLLOWUP_ORDER:
         if trait not in prefs:
             return trait
@@ -184,21 +234,38 @@ def next_missing_trait(prefs: Dict[str, int]) -> str | None:
 # ============================================================
 #  UI HELPERS
 # ============================================================
+def typing_message(role: str, text: str, delay: float = 0.02) -> None:
+    """Render a typing-style message for the given role."""
+    with st.chat_message(role):
+        placeholder = st.empty()
+        displayed = ""
+        words = text.split(" ")
+        for i, word in enumerate(words):
+            displayed += word + " "
+            # Small cursor effect on last partial update
+            if i < len(words) - 1:
+                placeholder.markdown(displayed + "▌")
+            else:
+                placeholder.markdown(displayed)
+            time.sleep(delay)
+
+
 def render_breed_card(row, rank: int) -> None:
+    """Display a single recommended breed card."""
     breed = row["Breed"]
     score = row["score"]
     details = row["details"]
 
-    st.markdown(f"### #{rank} — **{breed}** (match: {score:.1f}/100)")
+    st.markdown(f"### #{rank} — **{breed}** (match score: {score:.1f}/100)")
 
-    img = image_url_for_breed(breed)
-    link = folder_url_for_breed(breed)
+    img_url = image_url_for_breed(breed)
+    folder = folder_url_for_breed(breed)
 
-    if img:
-        st.image(img, width=300)
+    if img_url:
+        st.image(img_url, width=320, caption=breed)
 
-    if link:
-        st.markdown(f"[More photos of **{breed}** in the dataset]({link})")
+    if folder:
+        st.markdown(f"[📸 More photos of **{breed}** in the dataset]({folder})")
 
     st.write("**Why this breed might fit you:**")
     for line in explain_match(details):
@@ -207,20 +274,77 @@ def render_breed_card(row, rank: int) -> None:
     st.markdown("---")
 
 
+def summarize_prefs(prefs: Dict[str, int]) -> str:
+    """Create a short natural-language summary of current preferences."""
+    if not prefs:
+        return "I don't know much yet. Tell me about your home, energy level, kids, or allergies!"
+
+    parts = []
+
+    energy = prefs.get("Energy Level")
+    if energy:
+        if energy <= 2:
+            parts.append("You’d like a calmer, lower-energy dog.")
+        elif energy == 3:
+            parts.append("You’re okay with a medium-energy dog.")
+        else:
+            parts.append("You’d like a pretty active dog.")
+
+    shed = prefs.get("Shedding Level")
+    if shed:
+        if shed <= 2:
+            parts.append("Low shedding seems important to you.")
+        elif shed >= 4:
+            parts.append("You don’t mind a bit of shedding.")
+
+    kids = prefs.get("Good With Young Children")
+    if kids:
+        if kids >= 4:
+            parts.append("Being gentle with children matters.")
+        else:
+            parts.append("Kids aren’t a top concern.")
+
+    bark = prefs.get("Barking Level")
+    if bark:
+        if bark <= 2:
+            parts.append("You prefer a quieter dog.")
+        elif bark >= 4:
+            parts.append("You’re okay with a dog that’s more vocal.")
+
+    train = prefs.get("Trainability Level")
+    if train:
+        if train >= 4:
+            parts.append("You’d like a dog that’s easier to train.")
+        else:
+            parts.append("Trainability is less critical.")
+
+    aff = prefs.get("Affectionate With Family")
+    if aff:
+        if aff >= 4:
+            parts.append("You want a very affectionate, cuddly dog.")
+        elif aff <= 2:
+            parts.append("You’re okay with a more independent dog.")
+
+    return " ".join(parts)
+
+
 # ============================================================
 #  MAIN APP
 # ============================================================
-def main():
+def main() -> None:
+    st.set_page_config(
+        page_title="Dog Lover — Dog Breed Chatbot",
+        page_icon="🐶",
+        layout="centered",
+    )
 
-    st.set_page_config(page_title="Dog Lover Chatbot", page_icon="🐶", layout="centered")
-
-    # Load dataset
+    # Load traits once
     if "traits_df" not in st.session_state:
         st.session_state.traits_df = load_breed_traits()
 
     df = st.session_state.traits_df
 
-    # State
+    # Conversation state
     state = st.session_state
     state.setdefault("chat", [])
     state.setdefault("prefs", {})
@@ -228,86 +352,137 @@ def main():
     state.setdefault("pending", None)
     state.setdefault("results", None)
 
-    # Greeting
+    # ---------------- Sidebar: memory + controls + voice ----------------
+    with st.sidebar:
+        st.markdown("## 🧠 What I Know About You")
+        st.write(summarize_prefs(state.prefs))
+
+        if st.button("🔁 Reset conversation"):
+            for key in ["chat", "prefs", "weights", "pending", "results"]:
+                if key in state:
+                    del state[key]
+            st.experimental_rerun()
+
+        st.markdown("---")
+        st.markdown("### 🐕 Fun Dog Fact")
+        st.write(random.choice(DOG_FACTS))
+
+        st.markdown("---")
+        st.markdown("### 🎙️ Optional Voice Input")
+        if HAS_MIC:
+            st.write("Click to record, then I’ll transcribe and use it as your message.")
+            audio = mic_recorder(
+                start_prompt="Start recording",
+                stop_prompt="Stop",
+                key="voice_input",
+            )
+            if audio and audio.get("text"):
+                # This library can return a 'text' field with transcription
+                state.setdefault("voice_queue", []).append(audio["text"])
+                st.write("Captured voice input. Send it from the main chat box if needed.")
+        else:
+            st.caption(
+                "Voice input is optional. To enable it, install `streamlit-mic-recorder` "
+                "in your environment and redeploy the app."
+            )
+
+    # ---------------- Greeting ----------------
     if not state.chat:
         greeting = (
             "Hi there! I’m **Dog Lover** 🐾\n\n"
-            "Tell me about your lifestyle and what kind of dog you'd love. "
-            "I'll ask a few quick questions and then find your perfect match!"
+            "Tell me about your lifestyle and what kind of dog you’d love. "
+            "I’ll ask a few quick questions and then find your best matches!"
         )
         state.chat.append(("assistant", greeting))
 
-    # Show chat history
+    st.title("🐾 Dog Lover — Dog Breed Matchmaker")
+    st.write(
+        "Describe your home, family, activity level, allergy needs, and personality preferences. "
+        "Dog Lover will guide you and recommend real breeds with photos."
+    )
+
+    # Show chat history (no typing animation for past messages)
     for role, content in state.chat:
         with st.chat_message(role):
             st.markdown(content)
 
-    # Input
-    msg = st.chat_input("Tell me about your lifestyle or dog preferences...")
-    if msg:
-        # Show user
-        state.chat.append(("user", msg))
-        with st.chat_message("user"):
-            st.markdown(msg)
+    # Main chat input
+    message = st.chat_input("Tell Dog Lover about your lifestyle or dream dog...")
 
-        # Irrelevant message handling
-        if is_irrelevant(msg) and state.pending is None:
-            bot_reply = (
-                "I'm sorry but that is beyond what I can do. "
-                "Let's get back to choosing the best dog for you!"
+    if message:
+        # Show user message
+        state.chat.append(("user", message))
+        with st.chat_message("user"):
+            st.markdown(message)
+
+        # Off-topic handling (only if not answering a pending question)
+        if is_irrelevant(message) and state.pending is None:
+            reply = (
+                "I’m sorry but that is beyond what I can do. "
+                "Let’s get back to how I can help you pick the best dog for you."
             )
-            state.chat.append(("assistant", bot_reply))
-            with st.chat_message("assistant"):
-                st.markdown(bot_reply)
+            state.chat.append(("assistant", reply))
+            typing_message("assistant", reply)
             return
 
-        # Parse message
-        delta_prefs, delta_weights = infer_preferences_from_message(msg, state.pending)
+        # Parse preferences
+        delta_prefs, delta_weights = infer_preferences_from_message(
+            message, state.pending
+        )
 
-        # Merge into stored prefs
+        # Merge into state
         for k, v in delta_prefs.items():
             state.prefs[k] = v
         for k, w in delta_weights.items():
             state.weights[k] = max(state.weights.get(k, 0.7), w)
 
-        # If this was a follow-up question, clear pending
+        # Clear pending trait (if we were asking a follow-up)
         state.pending = None
 
-        # DECISION: If fewer than 4 traits, only ask follow-up.
-        if len(state.prefs) < 4:
+        # ---------- Decide whether to ask follow-up or recommend ----------
+        MIN_TRAITS_FOR_RECOMMENDATION = 4
+
+        if len(state.prefs) < MIN_TRAITS_FOR_RECOMMENDATION:
             nxt = next_missing_trait(state.prefs)
             state.pending = nxt
 
             bot_msg = (
-                f"Thanks! That helps a lot.\n\n"
+                "Thanks! That helps a lot. 🐕\n\n"
                 f"**One more quick question:** {FOLLOWUP_QUESTIONS[nxt]}"
             )
             state.chat.append(("assistant", bot_msg))
-            with st.chat_message("assistant"):
-                st.markdown(bot_msg)
+            typing_message("assistant", bot_msg)
+            return  # No recommendations yet
 
-            return  # ❗ EARLY RETURN — NO RECOMMENDATIONS YET
-
-        # =====================================================
-        # If we reach here → We have 4+ traits → recommend
-        # =====================================================
+        # ---------- We have enough info — recommend breeds ----------
         results = score_breeds(df, state.prefs, state.weights)
         top3 = results.head(3)
         state.results = top3
 
-        bot_msg = (
-            "Great! I think I have enough information to suggest some breeds.\n\n"
-            "Here are your top matches:"
+        intro = (
+            "Awesome, I think I have enough information now. 🐶✨\n\n"
+            "Here are your top dog breed matches based on everything you’ve told me:"
         )
+        state.chat.append(("assistant", intro))
+        typing_message("assistant", intro)
 
-        state.chat.append(("assistant", bot_msg))
         with st.chat_message("assistant"):
-            st.markdown(bot_msg)
-
             for i, row in top3.iterrows():
                 render_breed_card(row, rank=i + 1)
 
+            # Fun dog fact after recommendations
+            st.markdown(
+                f"**Bonus dog fact:** {random.choice(DOG_FACTS)}"
+            )
 
-# Run
+    # If no new message but we already have results, show them below
+    elif state.results is not None:
+        st.markdown("---")
+        st.subheader("🐶 Your Current Top Matches")
+        for i, row in state.results.iterrows():
+            render_breed_card(row, rank=i + 1)
+
+
 if __name__ == "__main__":
     main()
+
