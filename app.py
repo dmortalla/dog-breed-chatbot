@@ -313,7 +313,7 @@ def main() -> None:
         )
         st.session_state.chat_history.append(("assistant", greeting))
 
-    st.title("🐕 Dog Lover — Dog Breed Matchmaker")
+    st.title("🐕 Dog Lover — Dog Breed Matchmaker Chatbot")
     st.write(
         "Chat with Dog Lover about your lifestyle and preferences, "
         "and get real dog breed suggestions with photos."
