@@ -99,19 +99,20 @@ def merge_traits(existing: Dict[str, str], new: Dict[str, str]) -> Dict[str, str
     return merged
 
 
-def classify_off_topic(message: str) -> bool:
+def classify_off_topic(message) -> bool:
     """
     Return True only if the message is genuinely off-topic.
 
     A message is considered ON-TOPIC if:
       - It mentions dogs, breeds, lifestyle, or traits we care about, or
       - It is a simple confirmation like 'yes', 'no', 'sure', etc.
-
-    Everything else defaults to ON-TOPIC unless it clearly mentions unrelated domains.
     """
-    msg = message.lower().strip()
+    # Be robust to non-string inputs (e.g., mic recorder objects)
+    try:
+        msg = str(message).lower().strip()
+    except Exception:
+        return False  # treat as on-topic rather than crashing
 
-    # Simple confirmations should never be treated as off-topic
     confirmations = [
         "yes", "yep", "yeah", "sure", "ok", "okay",
         "sounds good", "fine", "correct", "that's right"
@@ -129,7 +130,6 @@ def classify_off_topic(message: str) -> bool:
     if any(k in msg for k in dog_keywords):
         return False
 
-    # Strong unrelated-topic keywords → off-topic
     unrelated = [
         "bitcoin", "crypto", "stock", "stocks", "recipe",
         "politics", "election", "war", "galaxy", "universe",
@@ -138,5 +138,4 @@ def classify_off_topic(message: str) -> bool:
     if any(w in msg for w in unrelated):
         return True
 
-    # Default: assume on-topic to be safe
     return False
