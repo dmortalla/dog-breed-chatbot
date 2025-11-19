@@ -129,3 +129,4 @@ def recommend_breeds(
     df_sorted = df_sorted[df_sorted["__score"] > 0]
 
     return df_sorted["Breed"].head(top_n).tolist()
+
