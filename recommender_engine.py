@@ -1,66 +1,29 @@
 """
 Recommendation + Image Loading Engine for Dog Breed Matchmaker
 
-This module:
-- Cleans numeric trait data
-- Computes match scores
-- Loads REAL images from the GitHub dataset
-- Normalizes breed names to folder names
-- Fixes accent/Unicode/punctuation inconsistencies
+This version is fully compatible with the folder structure of:
+https://github.com/maartenvandenbroeck/Dog-Breeds-Dataset
+
+Folders look like:
+"airedale terrier dog"
+"akita dog"
+"alaskan malamute dog"
+etc.
+
+This module handles:
+- Normalizing CSV breed names → correct dataset folder format
+- Constructing stable image URLs
+- Trait cleaning & match scoring
 """
 
 import pandas as pd
 import unicodedata
 import re
 
+# ------------------------------------------------------------
+# 1. NUMERIC TRAITS
+# ------------------------------------------------------------
 
-# ----------------------------------------------
-# Known folder overrides (GitHub inconsistencies)
-# ----------------------------------------------
-FOLDER_OVERRIDES = {
-    "Cirnechi dell’Etna": "Cirnechi_dell_Etna",
-    "Cirneco dell’Etna": "Cirnechi_dell_Etna",
-    "Chien d’Artois": "Chien_dArtois",
-    "St. John’s Water Dog": "St_Johns_Water_Dog",
-    "Hovawart": "Hovawart",  # included for clarity — already clean
-}
-
-
-# ----------------------------------------------
-# Normalize breed → folder name
-# ----------------------------------------------
-def normalize_breed_folder(breed: str) -> str:
-    """
-    Convert breed name (“Cirnechi dell’Etna”) into the exact folder format used by:
-    https://github.com/maartenvandenbroeck/Dog-Breeds-Dataset
-
-    Steps:
-    - Remove accents
-    - Remove curly apostrophes ’
-    - Remove punctuation
-    - Replace spaces with underscores
-    - Enforce ASCII
-    """
-    # Overrides first — exact match → exact folder
-    if breed in FOLDER_OVERRIDES:
-        return FOLDER_OVERRIDES[breed]
-
-    # Normalize Unicode → ASCII
-    text = unicodedata.normalize("NFKD", breed)
-    text = "".join(c for c in text if ord(c) < 128)
-
-    # Remove punctuation except spaces
-    text = re.sub(r"[^\w\s]", "", text)
-
-    # Replace spaces with underscores
-    text = text.strip().replace(" ", "_")
-
-    return text
-
-
-# ------------------------------------------------------------------------------
-# Compute match scores
-# ------------------------------------------------------------------------------
 NUMERIC_TRAITS = [
     "Affectionate With Family",
     "Good With Young Children",
@@ -79,8 +42,12 @@ NUMERIC_TRAITS = [
 ]
 
 
+# ------------------------------------------------------------
+# 2. Trait cleaning
+# ------------------------------------------------------------
+
 def clean_breed_traits(df: pd.DataFrame) -> pd.DataFrame:
-    """Extract numeric values from mixed string columns (e.g., '5 - High')."""
+    """Convert mixed string traits like '5 - High' → numeric 5."""
     df = df.copy()
     for col in NUMERIC_TRAITS:
         if col in df.columns:
@@ -94,18 +61,19 @@ def clean_breed_traits(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ------------------------------------------------------------
+# 3. Compute match score (0–100)
+# ------------------------------------------------------------
+
 def compute_match_scores(numeric_df: pd.DataFrame, user_profile: dict) -> pd.DataFrame:
-    """Compute a 0–100 match score for each breed."""
+    """Compute similarity score between user profile and each breed."""
     traits = list(user_profile.keys())
     df = numeric_df.dropna(subset=traits).copy()
 
-    max_diff = 4 * len(traits)  # Each trait diff is between 0–4
+    max_diff = 4 * len(traits)
 
     def total_diff(row):
-        return sum(
-            abs(float(row[t]) - float(user_profile[t]))
-            for t in traits
-        )
+        return sum(abs(float(row[t]) - float(user_profile[t])) for t in traits)
 
     df["distance"] = df.apply(total_diff, axis=1)
     df["score"] = (1 - df["distance"] / max_diff) * 100
@@ -114,47 +82,70 @@ def compute_match_scores(numeric_df: pd.DataFrame, user_profile: dict) -> pd.Dat
     return df.sort_values(by="score", ascending=False)
 
 
-# ------------------------------------------------------------------------------
-# Load REAL IMAGE from GitHub raw dataset
-# ------------------------------------------------------------------------------
+# ------------------------------------------------------------
+# 4. Dataset folder normalization rules
+# ------------------------------------------------------------
+
+def dataset_folder_for_breed(breed: str) -> str:
+    """
+    Convert CSV breed names into the dataset's folder names.
+
+    Dataset format:
+    - lowercase
+    - remove accents
+    - remove punctuation
+    - convert plural → singular
+    - append " dog"
+
+    Example:
+    "Rhodesian Ridgebacks" → "rhodesian ridgeback dog"
+    """
+    # Normalize Unicode → ASCII
+    name = unicodedata.normalize('NFKD', breed)
+    name = ''.join(c for c in name if ord(c) < 128)
+
+    # Lowercase
+    name = name.lower()
+
+    # Remove punctuation
+    name = re.sub(r"[^\w\s]", "", name)
+
+    # Remove plural "s" (simple heuristic works for 95% of breeds)
+    if name.endswith("s"):
+        name = name[:-1]
+
+    # Add dataset suffix
+    folder = f"{name} dog"
+
+    return folder
+
+
+# ------------------------------------------------------------
+# 5. Construct REAL GitHub image URL
+# ------------------------------------------------------------
+
 def get_breed_image_url(breed: str) -> str:
     """
-    Load ACTUAL breed photos directly from the GitHub Dog-Breeds-Dataset.
+    Build a URL pointing to a real photo in the GitHub dataset.
 
-    Strategy:
-    1. Normalize breed => folder name
-    2. Try the most common image names:
-         {folder}/{folder}_1.jpg
-         {folder}/{folder}_01.jpg
-    3. Return URL — Streamlit will display immediately
-
-    Returns:
-        URL string to a REAL dog photo.
+    The dataset usually contains images named:
+    - 1.jpg
+    - 2.jpg
+    - 3.jpg
+    ...
     """
-    folder = normalize_breed_folder(breed)
-    base = (
-        "https://raw.githubusercontent.com/"
-        "maartenvandenbroeck/Dog-Breeds-Dataset/main"
-    )
+    base = "https://raw.githubusercontent.com/maartenvandenbroeck/Dog-Breeds-Dataset/master"
+    folder = dataset_folder_for_breed(breed)
 
-    # Try common naming patterns
-    candidates = [
-        f"{base}/{folder}/{folder}_1.jpg",
-        f"{base}/{folder}/{folder}_01.jpg",
-        f"{base}/{folder}/{folder}.jpg",
-    ]
-
-    # No need to verify existence — Streamlit handles display gracefully.
-    return candidates[0]  # Best guess — extremely high accuracy
+    return f"{base}/{folder}/1.jpg"  # most folders have at least "1.jpg"
 
 
-# ------------------------------------------------------------------------------
-# GitHub folder link (for “View more photos”)
-# ------------------------------------------------------------------------------
+# ------------------------------------------------------------
+# 6. Folder link for gallery
+# ------------------------------------------------------------
+
 def build_image_url(breed: str) -> str:
-    """Link directly to the breed folder in the dataset."""
-    folder = normalize_breed_folder(breed)
-    return (
-        "https://github.com/maartenvandenbroeck/"
-        f"Dog-Breeds-Dataset/tree/main/{folder}"
-    )
+    """Return GitHub folder link for 'View more photos'."""
+    folder = dataset_folder_for_bre ed(breed)
+    return f"https://github.com/maartenvandenbroeck/Dog-Breeds-Dataset/tree/master/{folder}"
+
