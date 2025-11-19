@@ -1,337 +1,208 @@
 import streamlit as st
-from streamlit_mic_recorder import mic_recorder
-import time
-import random
-import requests
-from io import BytesIO
-from PIL import Image
-
-from trait_engine import parse_preferences
+from trait_engine import extract_traits_from_message, merge_traits, classify_off_topic
+from chatbot_utils import typing_response
 from recommender_engine import recommend_breeds
-from chatbot_utils import (
-    add_user_msg,
-    add_assistant_msg,
-    load_data,
+import random
+
+# -----------------------------
+#   INITIAL PAGE CONFIG
+# -----------------------------
+st.set_page_config(
+    page_title="Dog Lover Chatbot",
+    page_icon="🐶",
+    layout="wide"
 )
 
-# -------------------------------
-# THEME
-# -------------------------------
+# -----------------------------
+#   SESSION STATE INIT
+# -----------------------------
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-def apply_theme(theme: str) -> None:
-    if theme == "dark":
-        css = """
+if "traits" not in st.session_state:
+    st.session_state.traits = {}
+
+if "awaiting" not in st.session_state:
+    st.session_state.awaiting = None
+
+if "theme" not in st.session_state:
+    st.session_state.theme = "light"
+
+if "voice_input" not in st.session_state:
+    st.session_state.voice_input = ""
+
+if "memory_acknowledged" not in st.session_state:
+    st.session_state.memory_acknowledged = False
+
+# -----------------------------
+#   SIDEBAR (RESTORED)
+# -----------------------------
+with st.sidebar:
+    st.markdown("## 🐾 Dog Lover Settings")
+
+    # Theme toggle (restored)
+    theme_choice = st.radio("Theme:", ["light", "dark"], index=0 if st.session_state.theme == "light" else 1)
+    st.session_state.theme = theme_choice
+
+    # Voice Input (restored)
+    st.markdown("### 🎙 Voice Input")
+    try:
+        from st_mic_recorder import mic_recorder
+        audio = mic_recorder(start_prompt="Tap to record your message", stop_prompt="Recording...", format="wav")
+        if audio:
+            st.session_state.voice_input = audio["text"]
+    except Exception:
+        st.info("Voice input unavailable (package missing).")
+
+    # Reset Conversation (restored)
+    if st.button("🔄 Reset Conversation"):
+        st.session_state.messages = []
+        st.session_state.traits = {}
+        st.session_state.awaiting = None
+        st.session_state.memory_acknowledged = False
+        st.experimental_rerun()
+
+# -----------------------------
+#   THEME FIX (READABILITY)
+# -----------------------------
+if st.session_state.theme == "dark":
+    st.markdown("""
         <style>
-        body {
-            background-color: #1e293b !important;
-            color: #f1f5f9 !important;
-        }
-        [data-testid="stSidebar"] {
-            background-color: #0f172a !important;
-            color: #f8fafc !important;
-        }
-        [data-testid="stChatMessage"] {
-            margin-bottom: 0.3rem;
-        }
-        [data-testid="stChatMessage"] > div {
-            border-radius: 16px;
-            padding: 10px 14px;
-        }
-        [data-testid="stChatMessage-user"] > div {
-            background: #334155 !important;
-            color: #f1f5f9 !important;
-        }
-        [data-testid="stChatMessage-assistant"] > div {
-            background: #0f172a !important;
-            color: #f1f5f9 !important;
-        }
-        .stTextInput input, .stChatInput textarea {
-            background: #1e293b !important;
-            color: #f8fafc !important;
-            border: 1px solid #475569 !important;
-        }
+        body, .stApp { background-color: #111 !important; color: #EEE !important; }
+        .stChatMessage { background-color: #222 !important; }
         </style>
-        """
-    else:
-        css = """
-        <style>
-        body { background-color: #ffffff !important; color: #111827 !important; }
-        [data-testid="stSidebar"] { background-color: #f9fafb !important; }
-        [data-testid="stChatMessage"] { margin-bottom: 0.3rem; }
-        [data-testid="stChatMessage"] > div {
-            border-radius: 16px; padding: 10px 14px;
-        }
-        [data-testid="stChatMessage-user"] > div { background: #e5f3ff !important; }
-        [data-testid="stChatMessage-assistant"] > div { background: #f3f4f6 !important; }
-        </style>
-        """
-    st.markdown(css, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
+# -----------------------------
+#   HEADER
+# -----------------------------
+st.markdown("# 🐶 Dog Lover Chatbot — Find Your Perfect Dog Breed!")
+st.markdown("Tell me about your lifestyle and preferences. I’ll match you with the perfect dog!")
 
-# -------------------------------
-# SAMPLE DOG FACTS
-# -------------------------------
+# -----------------------------
+#   CHAT DISPLAY
+# -----------------------------
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
+
+# -----------------------------
+#   DOG FACTS (unchanged)
+# -----------------------------
 DOG_FACTS = [
-    "Dogs can learn over 100 words 🐶🧠",
-    "Some dogs can smell medical conditions 👃✨",
-    "Greyhounds can reach speeds of 45 mph! ⚡",
-    "A dog's nose print is as unique as a fingerprint.",
+    "A dog's nose print is unique—just like a human fingerprint.",
+    "Dogs can learn more than 1000 words.",
+    "Some dogs can smell medical conditions like seizures or diabetes.",
+    "Greyhounds can reach speeds up to 45 mph.",
 ]
 
+# -----------------------------
+#   PROCESS USER INPUT
+# -----------------------------
+def process_message(user_msg: str):
 
-# -------------------------------
-# REPEAT TRAIT ACKNOWLEDGEMENT
-# -------------------------------
-
-def detect_repeated_traits(user_text: str, prefs: dict, new_prefs: dict) -> str:
-    replies = {
-        "energy": "I remember your preferred energy level — thanks for confirming! ⚡👌",
-        "home": "I've already noted your living situation — all good! 🏡",
-        "allergies": "Got it — you mentioned shedding earlier, and I’ve kept that in mind 👌",
-        "kids": "You already told me about children — thanks for confirming! 🧒🐶",
-    }
-    msgs = []
-    for trait in new_prefs:
-        if trait in prefs and replies.get(trait):
-            msgs.append(replies[trait])
-    return "\n".join(msgs)
-
-
-# -------------------------------
-# OFF TOPIC CLASSIFIER (ENHANCED)
-# -------------------------------
-
-def classify_off_topic(text: str, extracted: dict) -> bool:
-    t = text.lower().strip()
-
-    if extracted:
-        return False
-
-    confirmations = [
-        "yes", "yep", "yeah", "sure", "ok", "okay",
-        "sounds good", "correct", "right", "fine"
-    ]
-    if any(t.startswith(c) for c in confirmations):
-        return False
-
-    dog_keywords = [
-        "dog", "puppy", "breed", "shedding", "hair", "fur",
-        "energy", "calm", "quiet", "active", "yard",
-        "apartment", "house", "kids", "children",
-        "family", "allergy", "hypoallergenic",
-    ]
-    if any(k in t for k in dog_keywords):
-        return False
-
-    return True
-
-
-# -------------------------------
-# MEMORY SUMMARY (ENHANCED)
-# -------------------------------
-
-def render_memory_summary(prefs: dict) -> str:
-    text = ["Here’s what I currently know about you so far: 👇\n"]
-
-    if "energy" in prefs:
-        em = {1: "low", 3: "medium", 5: "high"}
-        text.append(f"• Preferred energy level: **{em[prefs['energy']]}**")
-
-    if "home" in prefs:
-        hm = {1: "small apartment", 2: "apartment", 3: "house with a yard"}
-        text.append(f"• Living situation: **{hm[prefs['home']]}**")
-
-    if "allergies" in prefs:
-        am = {1: "hypoallergenic", 2: "low-shedding", 4: "shedding ok"}
-        text.append(f"• Allergy/shedding preference: **{am[prefs['allergies']]}**")
-
-    if "kids" in prefs:
-        km = {1: "yes", 0: "no"}
-        text.append(f"• Needs to be good with kids: **{km[prefs['kids']]}**")
-
-    text.append("\nIf I missed something, please tell me now. 🐶✨")
-
-    return "\n".join(text)
-
-
-# -------------------------------
-# IMAGE LOADER
-# -------------------------------
-
-def load_breed_image(breed: str) -> Image.Image:
-    folder = breed.replace(" ", "_")
-    url = f"https://raw.githubusercontent.com/maartenvandenbroeck/Dog-Breeds-Dataset/main/{folder}/Image_1.jpg"
-    try:
-        r = requests.get(url, timeout=5)
-        img = Image.open(BytesIO(r.content))
-        return img
-    except:
-        return None
-
-
-# -------------------------------
-# SIDEBAR
-# -------------------------------
-
-def render_sidebar():
-    st.sidebar.title("🐾 Dog Lover Settings")
-
-    theme_choice = st.sidebar.radio(
-        "Theme:", ["light", "dark"], index=0
-    )
-    apply_theme(theme_choice)
-
-    st.sidebar.markdown("### 🎙 Voice Input")
-    st.sidebar.info("Tap to record your message")
-    voice = mic_recorder(start_prompt="Start recording", stop_prompt="Stop", just_once=False)
-    return voice
-
-
-# -------------------------------
-# TYPING SIMULATION
-# -------------------------------
-
-def typing(msg: str):
-    add_assistant_msg("…")
-    time.sleep(0.15)
-    st.session_state.messages.pop()  # remove dots
-    add_assistant_msg(msg)
-
-
-# -------------------------------
-# APP MAIN
-# -------------------------------
-
-def main():
-    st.title("🐶 Dog Lover — Your Personalized Dog Matchmaker")
-
-    voice_text = render_sidebar()
-
-    # Init states
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-        st.session_state.preferences = {}
-        st.session_state.awaiting_final_confirmation = False
-
-        intro = (
-            "Hi there! I'm **Dog Lover**, your friendly canine matchmaker. 🐾\n\n"
-            "Tell me about your lifestyle and what you're hoping for in a dog. "
-            "I'll ask questions only if needed."
-        )
-        add_assistant_msg(intro)
-
-    # Display history
-    for role, content in st.session_state.messages:
-        if role == "user":
-            st.chat_message("user").write(content)
-        else:
-            st.chat_message("assistant").write(content)
-
-    # Process voice
-    if voice_text:
-        user_msg = voice_text["text"]
-    else:
-        user_msg = st.chat_input("Type something about your dream dog…")
-
-    if not user_msg:
+    # OFF-TOPIC CHECK
+    if classify_off_topic(user_msg):
+        bot_reply = "I’m sorry, but that’s a bit outside what I can help with. Let’s get back to finding you the perfect dog. 🐾"
+        st.session_state.messages.append({"role": "assistant", "content": bot_reply})
         return
 
-    add_user_msg(user_msg)
+    new_traits = extract_traits_from_message(user_msg)
 
-    # Handle confirmation stage
-    if st.session_state.awaiting_final_confirmation:
-        if any(x in user_msg.lower() for x in ["yes", "correct", "go ahead", "proceed"]):
-            st.session_state.awaiting_final_confirmation = False
-        else:
-            added = parse_preferences(user_msg)
-            if added:
-                st.session_state.preferences.update(added)
-                typing("Thanks! Updated your preferences. 👍")
-            else:
-                typing("No worries — I’ll proceed.")
-            st.session_state.awaiting_final_confirmation = False
+    if new_traits:
+        duplicates = [k for k in new_traits if k in st.session_state.traits]
+        st.session_state.traits = merge_traits(st.session_state.traits, new_traits)
 
-    # Extract new traits
-    new_prefs = parse_preferences(user_msg)
+        if duplicates:
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": f"Got it — you mentioned **{', '.join(duplicates)}** earlier, and I’ve kept that in mind 👌."
+            })
 
-    # Off-topic
-    if classify_off_topic(user_msg, new_prefs):
-        typing("I’m sorry, but that’s beyond what I can help with. Let’s get back to finding your perfect dog! 🐶")
+    # Decide the next question
+    t = st.session_state.traits
+
+    if "energy" not in t:
+        st.session_state.awaiting = "energy"
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "Awesome! Let’s start with **energy level**.\n\nWould your ideal dog be **low**, **medium**, or **high** energy? 🐕⚡"
+        })
         return
 
-    # Repeated traits
-    repeat_msg = detect_repeated_traits(user_msg, st.session_state.preferences, new_prefs)
-    if repeat_msg:
-        typing(repeat_msg)
-
-    # Update traits
-    st.session_state.preferences.update(new_prefs)
-
-    prefs = st.session_state.preferences
-
-    # Required traits to recommend
-    REQUIRED = ["energy", "home", "allergies", "kids"]
-    if all(k in prefs for k in REQUIRED):
-
-        summary = render_memory_summary(prefs)
-        typing(summary)
-
-        st.session_state.awaiting_final_confirmation = True
+    if "living_space" not in t:
+        st.session_state.awaiting = "living_space"
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "Great — I’ve already noted your living situation. 🏡\n\nWhere do you live: **small apartment**, **standard apartment**, or **house with a yard**?"
+        })
         return
 
-    # Ask next missing trait
-    if "home" not in prefs:
-        typing("Let's talk about your living situation. Do you live in a small apartment, apartment, or a house with a yard?")
+    if "shedding" not in t:
+        st.session_state.awaiting = "shedding"
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "Let’s now consider **allergies**.\n\nDo you prefer **low-shedding** or **hypoallergenic** dogs? 🌿🐕"
+        })
         return
 
-    if "energy" not in prefs:
-        typing("How active would you like your dog to be? Low energy, medium, or high-energy companion?")
+    if "children" not in t:
+        st.session_state.awaiting = "children"
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "The presence of **children** could be a factor.\n\nShould your dog be especially **good with young children**? (yes/no) 👶🐶"
+        })
         return
 
-    if "allergies" not in prefs:
-        typing("Let’s now consider allergies. Do you prefer a hypoallergenic or low-shedding dog?")
+    # BEFORE RECOMMENDING — Confirm memory summary once
+    if not st.session_state.memory_acknowledged:
+        summary = "\n".join([f"- **{k}**: {v}" for k, v in st.session_state.traits.items()])
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": f"Here’s what I currently know about you:\n\n{summary}\n\nIf I missed anything, please tell me now. 😊"
+        })
+        st.session_state.memory_acknowledged = True
         return
 
-    if "kids" not in prefs:
-        typing("Do you need your dog to be especially good with young children?")
+    # FINAL — Recommend breeds
+    score_list = recommend_breeds(st.session_state.traits)
+
+    if not score_list:
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "Hmm… I couldn’t find any breed that fits all that. Try adjusting one preference?"
+        })
         return
 
-    # Recommendations
-    if not st.session_state.awaiting_final_confirmation:
-        matches = recommend_breeds(
-            st.session_state.data_breeds,
-            prefs
-        )
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": "Awesome, I think I have enough information now. 🐶✨\n\nHere are your top matches:"
+    })
 
-        if not matches:
-            typing("I couldn’t find a perfect match, but I can try again if you adjust your preferences.")
-            return
+    for name, score, img_url in score_list[:3]:
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": f"### 🐕 **{name}** — Match Score: **{score:.1f}/100**\n\n![dog]({img_url})"
+        })
 
-        typing("Great! Based on everything you shared, here are your top dog matches 🐾✨")
+    # Random dog fact
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": f"**Bonus dog fact:** {random.choice(DOG_FACTS)}"
+    })
 
-        for breed in matches:
-            st.subheader(breed)
-            img = load_breed_image(breed)
-            if img:
-                st.image(img, use_column_width=True)
-            else:
-                st.info("(Image unavailable)")
+# -----------------------------
+#   MAIN CHAT INPUT
+# -----------------------------
+user_msg = st.chat_input("Tell me about your lifestyle or your ideal dog...")
 
-            st.markdown(f"**{random.choice(DOG_FACTS)}**")
+if st.session_state.voice_input:
+    user_msg = st.session_state.voice_input
+    st.session_state.voice_input = ""
 
-        # Reset for next conversation
-        st.session_state.preferences = {}
-        st.session_state.awaiting_final_confirmation = False
+if user_msg:
+    st.session_state.messages.append({"role": "user", "content": user_msg})
+    process_message(user_msg)
+    st.experimental_rerun()
 
-
-# -------------------------------
-# Load Data Once
-# -------------------------------
-
-if "data_breeds" not in st.session_state:
-    dog_breeds, trait_descriptions = load_data()
-    st.session_state.data_breeds = dog_breeds
-
-# -------------------------------
-main()
 
