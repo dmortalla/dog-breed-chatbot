@@ -1,5 +1,4 @@
 import streamlit as st
-
 from chatbot_utils import (
     add_user_msg,
     add_assistant_msg,
@@ -8,6 +7,9 @@ from chatbot_utils import (
     init_memory,
     update_memory,
     memory_summary,
+    extract_traits,
+    typing_response,
+    classify_off_topic
 )
 from recommender_engine import recommend_breeds_with_cards
 
@@ -19,34 +21,21 @@ from recommender_engine import recommend_breeds_with_cards
 st.set_page_config(
     page_title="Dog Lover Chatbot",
     page_icon="🐶",
-    layout="wide",
+    layout="wide"
 )
 
 
 # ============================================================
-# INITIALIZATION
+# SESSION STATE INIT
 # ============================================================
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+if "step" not in st.session_state:
+    st.session_state.step = 1
 
-init_memory()
-
-if "wizard_step" not in st.session_state:
-    st.session_state.wizard_step = 1
+if "memory" not in st.session_state:
+    init_memory()
 
 dog_breeds, trait_descriptions = load_data()
-
-
-def _safe_rerun():
-    """Handle different Streamlit versions safely."""
-    try:
-        st.rerun()
-    except Exception:
-        try:
-            st.experimental_rerun()
-        except Exception:
-            pass
 
 
 # ============================================================
@@ -57,12 +46,17 @@ with st.sidebar:
     st.header("⚙️ Settings")
 
     if st.button("🔄 Reset Conversation"):
-        st.session_state.messages = []
-        init_memory()
-        st.session_state.wizard_step = 1
-        _safe_rerun()
+        st.session_state.step = 1
+        st.session_state.memory = {
+            "energy": None,
+            "living": None,
+            "allergies": None,
+            "children": None,
+            "size": None
+        }
+        st.experimental_rerun()
 
-    st.markdown("### 🧠 Your Preferences So Far")
+    st.markdown("### 🧠 Your Preferences")
     st.info(memory_summary())
 
     st.markdown("---")
@@ -70,220 +64,148 @@ with st.sidebar:
 
 
 # ============================================================
-# MAIN CHAT AREA
+# MAIN FLOW — STEP-BY-STEP QUESTIONS
 # ============================================================
 
-st.title("🐶 Dog Lover Chatbot — Find Your Perfect Dog Breed!")
-
-# Initial greeting only once
-if not any(role == "assistant" for role, _ in st.session_state.messages):
-    intro = (
-        "Hi there! I'm **Dog Lover**, your friendly dog-match chatbot.\n\n"
-        "Tell me about your energy level, living space (apartment / house with yard), "
-        "allergies or shedding concerns, whether you have kids, and what size of dog you’d like.\n\n"
-        "I’ll guide you step by step and then recommend three dog breeds, each with an image "
-        "and a short ‘social-post-style’ description.\n\n"
-        "**Let's start with your energy level.** Select one from the options shown in the drop-down menu below."
-    )
-    add_assistant_msg(intro)
-    st.chat_message("assistant").markdown(intro)
-
-# Render existing messages
-for role, content in st.session_state.messages:
-    st.chat_message(role).markdown(content)
-
-step = st.session_state.wizard_step
+step = st.session_state.step
 mem = st.session_state.memory
 
 
-# ============================================================
-# STEP 1 — ENERGY LEVEL
-# ============================================================
-
+# -------------------------------
+# STEP 1 — INTRODUCTION
+# -------------------------------
 if step == 1:
-    st.markdown("### Step 1: Energy Level")
-    choice = st.selectbox(
-        "Would your ideal dog be low, medium, or high energy?",
-        ["(Select one)", "low", "medium", "high"],
-        key="energy_select",
+    intro = (
+        "👋 **Hi there! I'm Dog Lover**, your friendly dog-match chatbot.\n\n"
+        "Tell me about your **energy level**, **living space**, **allergies**, "
+        "**kids**, and **preferred dog size**.\n\n"
+        "I’ll guide you step by step and then recommend **three dog breeds**, "
+        "each with an **image** and a short **social-post-style** description.\n\n"
+        "**Let's start with your energy level.**"
     )
-    if choice != "(Select one)" and mem.get("energy") is None:
-        update_memory("energy", choice)
-        add_user_msg(f"My ideal dog's energy level is **{choice}**.")
-        add_assistant_msg(
-            "Great — now let’s consider your **living situation**. "
-            "Next, choose your home type from the drop-down menu."
-        )
-        st.session_state.wizard_step = 2
-        _safe_rerun()
+    st.chat_message("assistant").markdown(intro)
+
+    energy = st.selectbox(
+        "Choose your energy level:",
+        ["Low", "Medium", "High"],
+    )
+
+    if st.button("Next ➡️"):
+        mem["energy"] = energy.lower()
+        st.session_state.step = 2
+        st.experimental_rerun()
 
 
-# ============================================================
+# -------------------------------
 # STEP 2 — LIVING SPACE
-# ============================================================
-
+# -------------------------------
 elif step == 2:
-    st.markdown("### Step 2: Living Space")
-    choice = st.selectbox(
-        "Which best describes where you live?",
-        [
-            "(Select one)",
-            "small apartment",
-            "standard apartment",
-            "house with a yard",
-        ],
-        key="living_select",
+    st.chat_message("assistant").markdown(
+        "🏡 Great! Now, tell me about your **living space**."
     )
-    if choice != "(Select one)" and mem.get("living") is None:
-        update_memory("living", choice)
-        add_user_msg(f"I live in a **{choice}**.")
-        add_assistant_msg(
-            "Thanks! Now let’s think about **allergies and shedding**. "
-            "Some people prefer low-shedding or hypoallergenic dogs."
-        )
-        st.session_state.wizard_step = 3
-        _safe_rerun()
+
+    living = st.selectbox(
+        "Choose your living situation:",
+        ["Small apartment", "Standard apartment", "House with yard"],
+    )
+
+    if st.button("Next ➡️"):
+        mem["living"] = living.lower()
+        st.session_state.step = 3
+        st.experimental_rerun()
 
 
-# ============================================================
-# STEP 3 — ALLERGIES / SHEDDING
-# ============================================================
-
+# -------------------------------
+# STEP 3 — ALLERGIES
+# -------------------------------
 elif step == 3:
-    st.markdown("### Step 3: Allergies & Shedding")
-    choice = st.selectbox(
-        "Which option fits you best?",
-        [
-            "(Select one)",
-            "no strong preference",
-            "low-shedding",
-            "hypoallergenic",
-        ],
-        key="allergy_select",
+    st.chat_message("assistant").markdown(
+        "🌱 Thanks! What about **allergies or shedding**?"
     )
-    if choice != "(Select one)" and mem.get("allergies") is None:
-        value = None if choice == "no strong preference" else choice
-        update_memory("allergies", value)
-        add_user_msg(f"My shedding/allergy preference is: **{choice}**.")
-        add_assistant_msg(
-            "Good to know. The presence of **children** can also be important. "
-            "Next, tell me if your dog should be especially good with young children."
-        )
-        st.session_state.wizard_step = 4
-        _safe_rerun()
+
+    allergies = st.selectbox(
+        "Choose an option:",
+        ["Hypoallergenic", "Low-shedding", "Shedding OK"],
+    )
+
+    if st.button("Next ➡️"):
+        mem["allergies"] = allergies.lower()
+        st.session_state.step = 4
+        st.experimental_rerun()
 
 
-# ============================================================
+# -------------------------------
 # STEP 4 — CHILDREN
-# ============================================================
-
+# -------------------------------
 elif step == 4:
-    st.markdown("### Step 4: Children")
-    choice = st.selectbox(
-        "Should your dog be especially good with young children?",
-        [
-            "(Select one)",
-            "yes",
-            "no",
-            "not important",
-        ],
-        key="children_select",
+    st.chat_message("assistant").markdown(
+        "👶 Do you need a dog that's good with **children**?"
     )
-    if choice != "(Select one)" and mem.get("children") is None:
-        value = None if choice == "not important" else choice
-        update_memory("children", value)
-        add_user_msg(f"Good with young children: **{choice}**.")
-        add_assistant_msg(
-            "Got it. Finally, let’s talk about **dog size**. "
-            "Choose the size you prefer, or pick 'no preference'."
-        )
-        st.session_state.wizard_step = 5
-        _safe_rerun()
+
+    kids = st.selectbox(
+        "Choose an option:",
+        ["Yes", "No"],
+    )
+
+    if st.button("Next ➡️"):
+        mem["children"] = kids.lower()
+        st.session_state.step = 5
+        st.experimental_rerun()
 
 
-# ============================================================
+# -------------------------------
 # STEP 5 — SIZE
-# ============================================================
-
+# -------------------------------
 elif step == 5:
-    st.markdown("### Step 5: Dog Size")
-    choice = st.selectbox(
-        "What size of dog do you prefer?",
-        [
-            "(Select one)",
-            "small",
-            "medium",
-            "large",
-            "no preference",
-        ],
-        key="size_select",
+    st.chat_message("assistant").markdown(
+        "📏 Great! What **size of dog** do you prefer?"
     )
-    if choice != "(Select one)" and mem.get("size") is None:
-        value = None if choice == "no preference" else choice
-        update_memory("size", value)
-        add_user_msg(f"My preferred dog size is: **{choice}**.")
-        add_assistant_msg(
-            "Awesome! I think I have enough information now. "
-            "Let me compute your best matches…"
-        )
-        st.session_state.wizard_step = 6
-        _safe_rerun()
+
+    size = st.selectbox(
+        "Choose dog size:",
+        ["Small", "Medium", "Large"],
+    )
+
+    if st.button("Show My Matches 🎯"):
+        mem["size"] = size.lower()
+        st.session_state.step = 6
+        st.experimental_rerun()
 
 
 # ============================================================
 # STEP 6 — RECOMMENDATIONS
 # ============================================================
-
 elif step >= 6:
     st.markdown("### 🎯 Your Top Dog Breed Matches")
 
-    # Get the top 3 recommendations
-    recs = recommend_breeds(
+    cards = recommend_breeds_with_cards(
         dog_breeds,
         mem.get("energy"),
         mem.get("living"),
         mem.get("allergies"),
         mem.get("children"),
-        mem.get("size")
+        mem.get("size"),
+        top_n=3,
     )
 
-    if not recs:
+    if not cards:
         st.warning(
             "I couldn't find good matches with the current preferences. "
             "Try resetting the conversation and choosing slightly broader options."
         )
     else:
-        st.markdown("Here are your **top 3 dog breeds** based on your choices:")
+        st.markdown("Here are your **top 3 dog breeds**:")
 
-        for breed in recs[:3]:
-            breed_folder = breed.lower().replace(" ", "_")
-            image_path = f"data/dog_images/{breed_folder}/Image_1.jpg"
+        for i, card in enumerate(cards, start=1):
+            st.markdown(f"#### #{i} — {card['breed']}")
 
-            col1, col2 = st.columns([1, 2])
+            st.image(
+                card["image_url"],
+                caption=card["breed"],
+                width=280,  # 👉 smaller image size as you requested
+            )
 
-            with col1:
-                try:
-                    st.image(image_path, width=250, caption=breed)
-                except:
-                    st.warning(f"No image found for {breed}")
+            st.markdown(card["summary"])
 
-            with col2:
-                st.markdown(
-                    f"""
-                    ### 🐾 {breed}
-
-                    **Why this breed matches you:**
-                    - Energy level: **{mem.get('energy')}**
-                    - Living situation: **{mem.get('living')}**
-                    - Allergies/shedding match: **{mem.get('allergies')}**
-                    - Good with children: **{mem.get('children')}**
-                    - Preferred size: **{mem.get('size')}**
-
-                    **Social-post style description:**  
-                    _The {breed} is a perfect fit for your lifestyle — loyal, adorable, and great for sharing on social media!_
-                    """
-                )
-
-            st.markdown("---")
-
+    st.markdown("---")
     st.info("Want to try different answers? Use **Reset Conversation** in the sidebar.")
