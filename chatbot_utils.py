@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import time
 
 
 # ============================================================
@@ -160,6 +161,25 @@ def extract_traits(message: str):
         "children": parse_children(message),
         "size": parse_size(message),
     }
+
+
+def typing_response(text: str, delay: float = 0.02):
+    """
+    Simulate a typing animation for assistant messages.
+
+    Args:
+        text (str): The message to display.
+        delay (float): Delay between characters.
+    """
+    placeholder = st.empty()
+    typed = ""
+
+    for char in text:
+        typed += char
+        placeholder.markdown(typed)
+        time.sleep(delay)
+
+    return typed
 
 
 # ============================================================
