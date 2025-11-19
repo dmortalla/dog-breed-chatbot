@@ -1,62 +1,76 @@
 import pandas as pd
 
-def score_breed(row, prefs):
-    """Return a match score between a single breed row and user preferences."""
+
+def score_match(breed_row, energy, living, allergies, children, size):
+    """
+    Compute a simple matching score for one breed row.
+    Higher score = better match.
+    """
+
     score = 0
 
-    # ENERGY
-    if "energy" in prefs:
-        try:
-            breed_energy = int(row["Energy Level"])
-            score += 5 - abs(breed_energy - prefs["energy"])
-        except:
-            pass
+    # energy (1–5 scale vs. low/medium/high)
+    if energy:
+        if energy == "low" and breed_row["Energy Level"] <= 2:
+            score += 1
+        elif energy == "medium" and breed_row["Energy Level"] == 3:
+            score += 1
+        elif energy == "high" and breed_row["Energy Level"] >= 4:
+            score += 1
 
-    # HOME → Adaptability Level
-    if "home" in prefs:
-        try:
-            adaptability = int(row["Adaptability Level"])
-            score += 5 - abs(adaptability - prefs["home"])
-        except:
-            pass
+    # living environment
+    if living:
+        if living == "small apartment" and breed_row["Adaptability Level"] >= 4:
+            score += 1
+        if living == "standard apartment" and breed_row["Adaptability Level"] >= 3:
+            score += 1
+        if living == "house with a yard" and breed_row["Energy Level"] >= 3:
+            score += 1
 
-    # ALLERGIES / SHEDDING
-    if "allergies" in prefs:
-        try:
-            shedding = int(row["Shedding Level"])
-            if prefs["allergies"] == 1:        # hypoallergenic (prefer very low shedding)
-                score += max(0, 5 - shedding)
-            elif prefs["allergies"] == 2:      # low shedding
-                score += max(0, 5 - shedding)
-            elif prefs["allergies"] == 4:      # shedding ok
-                score += 1
-        except:
-            pass
+    # allergies
+    if allergies:
+        if allergies == "hypoallergenic" and "hypoallergenic" in str(breed_row["Coat Type"]).lower():
+            score += 1
+        if allergies == "low-shedding" and breed_row["Shedding Level"] <= 2:
+            score += 1
 
-    # KIDS
-    if "kids" in prefs:
-        try:
-            kids_score = int(row["Good With Young Children"])
-            score += kids_score
-        except:
-            pass
+    # children
+    if children:
+        if children == "yes" and breed_row["Good With Young Children"] >= 4:
+            score += 1
+        if children == "no" and breed_row["Good With Young Children"] <= 2:
+            score += 1
+
+    # dog size from dataset's Coat Length + maybe other traits
+    if size:
+        # This is approximate — dataset doesn't have direct size measure
+        if size == "small" and breed_row["Coat Grooming Frequency"] <= 2:
+            score += 1
+        if size == "medium" and breed_row["Coat Grooming Frequency"] == 3:
+            score += 1
+        if size == "large" and breed_row["Coat Grooming Frequency"] >= 4:
+            score += 1
 
     return score
 
 
-def recommend_breeds(dog_breeds, prefs, top_n=3):
-    """Return the top matching breeds."""
-    dog_breeds = dog_breeds.copy()
+def recommend_breeds(df, energy, living, allergies, children, size):
+    """
+    Return top matching dog breeds based on memory.
+    """
+    if df is None or df.empty:
+        return []
 
-    dog_breeds["match_score"] = dog_breeds.apply(
-        lambda row: score_breed(row, prefs),
+    df = df.copy()
+    df["score"] = df.apply(
+        lambda row: score_match(
+            row, energy, living, allergies, children, size
+        ),
         axis=1
     )
 
-    ranked = dog_breeds.sort_values(
-        by="match_score",
-        ascending=False
-    )
+    # Sort by best score, return top 3
+    df_sorted = df.sort_values(by="score", ascending=False)
+    top = df_sorted.head(3)
 
-    top_breeds = ranked.head(top_n)["Breed"].tolist()
-    return top_breeds
+    return list(top["Breed"])
