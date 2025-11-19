@@ -108,7 +108,10 @@ if not st.session_state.get("intro_shown", False):
         "and a short ‘social-post-style’ description.\n\n"
         "**Let's start with your energy level.** Select one from the options shown in the drop-down menu below."
     )
+    # Only show visually — DO NOT store in chat history
     st.chat_message("assistant").markdown(intro)
+
+    # Mark it shown so it never appears again
     st.session_state.intro_shown = True
 
 # Render existing messages normally
