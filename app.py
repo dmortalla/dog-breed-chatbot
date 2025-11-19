@@ -255,16 +255,18 @@ elif step == 5:
 elif step >= 6:
     st.markdown("### 🎯 Your Top Dog Breed Matches")
 
-    recs = recommend_breeds_with_cards(
+    # FIXED: use recommend_breeds_with_cards (not recommend_breeds)
+    cards = recommend_breeds_with_cards(
         dog_breeds,
         mem.get("energy"),
         mem.get("living"),
         mem.get("allergies"),
         mem.get("children"),
-        mem.get("size")
+        mem.get("size"),
+        top_n=3
     )
 
-    if not recs:
+    if not cards:
         st.warning(
             "I couldn't find good matches with the current preferences. "
             "Try resetting the conversation and choosing slightly broader options."
@@ -272,18 +274,24 @@ elif step >= 6:
     else:
         st.markdown("Here are your **top 3 dog breeds** based on your choices:")
 
-        for card in recs[:3]:
+        for card in cards:
             breed = card["breed"]
-            image = card["image"]
-            summary = card["summary"]
+            image_url = card["image_url"]     # FIXED KEY
+            summary = card["summary"]         # FIXED KEY
 
             col1, col2 = st.columns([1, 2])
 
             with col1:
-                st.image(image, width=250, caption=breed)
+                st.image(image_url, width=250, caption=breed)
 
             with col2:
-                st.markdown(summary)
+                st.markdown(
+                    f"""
+                    ### 🐾 {breed}
+
+                    {summary}
+                    """
+                )
 
             st.markdown("---")
 
