@@ -75,8 +75,11 @@ with st.sidebar:
 
 st.title("🐶 Dog Lover Chatbot — Find Your Perfect Dog Breed!")
 
-# Initial greeting only once
-if not any(role == "assistant" for role, _ in st.session_state.messages):
+# ============================================================
+# FIXED INTRO — shown only once & NOT doubled
+# ============================================================
+
+if not st.session_state.get("intro_shown", False):
     intro = (
         "Hi there! I'm **Dog Lover**, your friendly dog-match chatbot.\n\n"
         "Tell me about your energy level, living space (apartment / house with yard), "
@@ -87,10 +90,13 @@ if not any(role == "assistant" for role, _ in st.session_state.messages):
     )
     add_assistant_msg(intro)
     st.chat_message("assistant").markdown(intro)
+    st.session_state.intro_shown = True  # <-- prevents duplication
 
-# Render existing messages
+
+# Render existing messages normally
 for role, content in st.session_state.messages:
     st.chat_message(role).markdown(content)
+
 
 step = st.session_state.wizard_step
 mem = st.session_state.memory
@@ -237,7 +243,6 @@ elif step == 5:
 elif step >= 6:
     st.markdown("### 🎯 Your Top Dog Breed Matches")
 
-    # Get the top 3 recommendations
     recs = recommend_breeds(
         dog_breeds,
         mem.get("energy"),
@@ -288,5 +293,3 @@ elif step >= 6:
 
     st.info("Want to try different answers? Use **Reset Conversation** in the sidebar.")
 
-    st.markdown("---")
-    st.info("Want to try different answers? Use **Reset Conversation** in the sidebar.")
