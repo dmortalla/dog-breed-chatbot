@@ -4,18 +4,12 @@ from chatbot_utils import typing_response
 from recommender_engine import recommend_breeds
 import random
 
-# -----------------------------
-#   INITIAL PAGE CONFIG
-# -----------------------------
 st.set_page_config(
     page_title="Dog Lover Chatbot",
     page_icon="🐶",
     layout="wide"
 )
 
-# -----------------------------
-#   SESSION STATE INIT
-# -----------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -35,16 +29,14 @@ if "memory_acknowledged" not in st.session_state:
     st.session_state.memory_acknowledged = False
 
 # -----------------------------
-#   SIDEBAR (RESTORED)
+# SIDEBAR (RESTORED)
 # -----------------------------
 with st.sidebar:
     st.markdown("## 🐾 Dog Lover Settings")
 
-    # Theme toggle (restored)
     theme_choice = st.radio("Theme:", ["light", "dark"], index=0 if st.session_state.theme == "light" else 1)
     st.session_state.theme = theme_choice
 
-    # Voice Input (restored)
     st.markdown("### 🎙 Voice Input")
     try:
         from st_mic_recorder import mic_recorder
@@ -54,7 +46,6 @@ with st.sidebar:
     except Exception:
         st.info("Voice input unavailable (package missing).")
 
-    # Reset Conversation (restored)
     if st.button("🔄 Reset Conversation"):
         st.session_state.messages = []
         st.session_state.traits = {}
@@ -62,9 +53,6 @@ with st.sidebar:
         st.session_state.memory_acknowledged = False
         st.experimental_rerun()
 
-# -----------------------------
-#   THEME FIX (READABILITY)
-# -----------------------------
 if st.session_state.theme == "dark":
     st.markdown("""
         <style>
@@ -73,22 +61,13 @@ if st.session_state.theme == "dark":
         </style>
     """, unsafe_allow_html=True)
 
-# -----------------------------
-#   HEADER
-# -----------------------------
 st.markdown("# 🐶 Dog Lover Chatbot — Find Your Perfect Dog Breed!")
 st.markdown("Tell me about your lifestyle and preferences. I’ll match you with the perfect dog!")
 
-# -----------------------------
-#   CHAT DISPLAY
-# -----------------------------
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
 
-# -----------------------------
-#   DOG FACTS (unchanged)
-# -----------------------------
 DOG_FACTS = [
     "A dog's nose print is unique—just like a human fingerprint.",
     "Dogs can learn more than 1000 words.",
@@ -97,14 +76,15 @@ DOG_FACTS = [
 ]
 
 # -----------------------------
-#   PROCESS USER INPUT
+# MAIN LOGIC
 # -----------------------------
 def process_message(user_msg: str):
 
-    # OFF-TOPIC CHECK
     if classify_off_topic(user_msg):
-        bot_reply = "I’m sorry, but that’s a bit outside what I can help with. Let’s get back to finding you the perfect dog. 🐾"
-        st.session_state.messages.append({"role": "assistant", "content": bot_reply})
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "I’m sorry, but that’s a bit outside what I can help with. Let’s get back to finding you the perfect dog. 🐾"
+        })
         return
 
     new_traits = extract_traits_from_message(user_msg)
@@ -119,7 +99,6 @@ def process_message(user_msg: str):
                 "content": f"Got it — you mentioned **{', '.join(duplicates)}** earlier, and I’ve kept that in mind 👌."
             })
 
-    # Decide the next question
     t = st.session_state.traits
 
     if "energy" not in t:
@@ -154,7 +133,6 @@ def process_message(user_msg: str):
         })
         return
 
-    # BEFORE RECOMMENDING — Confirm memory summary once
     if not st.session_state.memory_acknowledged:
         summary = "\n".join([f"- **{k}**: {v}" for k, v in st.session_state.traits.items()])
         st.session_state.messages.append({
@@ -164,7 +142,6 @@ def process_message(user_msg: str):
         st.session_state.memory_acknowledged = True
         return
 
-    # FINAL — Recommend breeds
     score_list = recommend_breeds(st.session_state.traits)
 
     if not score_list:
@@ -185,14 +162,13 @@ def process_message(user_msg: str):
             "content": f"### 🐕 **{name}** — Match Score: **{score:.1f}/100**\n\n![dog]({img_url})"
         })
 
-    # Random dog fact
     st.session_state.messages.append({
         "role": "assistant",
         "content": f"**Bonus dog fact:** {random.choice(DOG_FACTS)}"
     })
 
 # -----------------------------
-#   MAIN CHAT INPUT
+# CHAT INPUT
 # -----------------------------
 user_msg = st.chat_input("Tell me about your lifestyle or your ideal dog...")
 
@@ -204,5 +180,3 @@ if user_msg:
     st.session_state.messages.append({"role": "user", "content": user_msg})
     process_message(user_msg)
     st.experimental_rerun()
-
-
