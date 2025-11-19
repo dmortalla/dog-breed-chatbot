@@ -1,3 +1,6 @@
+import re
+import unicodedata
+
 import streamlit as st
 
 from chatbot_utils import (
@@ -9,7 +12,7 @@ from chatbot_utils import (
     update_memory,
     memory_summary,
 )
-from recommender_engine import recommend_breeds_with_cards
+from recommender_engine import recommend_breeds
 
 
 # ============================================================
@@ -49,6 +52,23 @@ def _safe_rerun():
             pass
 
 
+def _breed_to_folder(breed_name: str) -> str:
+    """
+    Convert a breed name from the CSV into a folder-friendly slug.
+
+    Handles odd characters like 'Â', accents, brackets, etc., so that
+    'ShihÂ Tzu' -> 'shih_tzu', 'AmericanÂ HairlessÂ Terriers' -> 'american_hairless_terriers'.
+    """
+    text = unicodedata.normalize("NFKD", str(breed_name))
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = text.lower()
+    text = text.replace("(", " ").replace(")", " ")
+    text = text.replace("'", " ").replace("/", " ")
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text
+
+
 # ============================================================
 # SIDEBAR
 # ============================================================
@@ -60,7 +80,6 @@ with st.sidebar:
         st.session_state.messages = []
         init_memory()
         st.session_state.wizard_step = 1
-        st.session_state.intro_shown = False
         _safe_rerun()
 
     st.markdown("### 🧠 Your Preferences So Far")
@@ -93,20 +112,9 @@ if not st.session_state.get("intro_shown", False):
     st.chat_message("assistant").markdown(intro)
     st.session_state.intro_shown = True
 
-
-# ============================================================
-# RENDER EXISTING MESSAGES (avoid intro duplication)
-# ============================================================
-
+# Render existing messages normally
 for role, content in st.session_state.messages:
-    if (
-        st.session_state.get("intro_shown", False)
-        and role == "assistant"
-        and content.startswith("Hi there! I'm **Dog Lover**")
-    ):
-        continue
     st.chat_message(role).markdown(content)
-
 
 step = st.session_state.wizard_step
 mem = st.session_state.memory
@@ -247,23 +255,22 @@ elif step == 5:
 
 
 # ============================================================
-# STEP 6 — RECOMMENDATIONS
+# STEP 6 — RECOMMENDATIONS (NO MATCH %)
 # ============================================================
 
 elif step >= 6:
     st.markdown("### 🎯 Your Top Dog Breed Matches")
 
-    cards = recommend_breeds_with_cards(
+    recs = recommend_breeds(
         dog_breeds,
         mem.get("energy"),
         mem.get("living"),
         mem.get("allergies"),
         mem.get("children"),
         mem.get("size"),
-        top_n=3,
     )
 
-    if not cards:
+    if not recs:
         st.warning(
             "I couldn't find good matches with the current preferences. "
             "Try resetting the conversation and choosing slightly broader options."
@@ -271,23 +278,35 @@ elif step >= 6:
     else:
         st.markdown("Here are your **top 3 dog breeds** based on your choices:")
 
-        for i, card in enumerate(cards, start=1):
-            breed = card["breed"]
-            image_url = card["image_url"]
-            match_pct = card["match_pct"]
-            summary = card["summary"]
-
-            st.markdown(f"#### #{i} — {breed} ({match_pct}% match)")
+        for breed in recs[:3]:
+            folder = _breed_to_folder(breed)
+            image_path = f"data/dog_images/{folder}/Image_1.jpg"
 
             col1, col2 = st.columns([1, 2])
 
             with col1:
-                st.image(image_url, width=250, caption=breed)
+                try:
+                    st.image(image_path, width=250, caption=breed)
+                except Exception:
+                    st.warning(f"No image found for {breed}")
 
             with col2:
-                st.markdown(summary)
+                st.markdown(
+                    f"""
+                    ### 🐾 {breed}
+
+                    **Why this breed matches you:**
+                    - Energy level: **{mem.get('energy')}**
+                    - Living situation: **{mem.get('living')}**
+                    - Allergies/shedding match: **{mem.get('allergies')}**
+                    - Good with children: **{mem.get('children')}**
+                    - Preferred size: **{mem.get('size')}**
+
+                    **Social-post style description:**  
+                    _The {breed} is a lovely fit for your lifestyle — easy to love, fun to live with, and perfect for sharing cute moments on social media!_
+                    """
+                )
 
             st.markdown("---")
 
     st.info("Want to try different answers? Use **Reset Conversation** in the sidebar.")
-
