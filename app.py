@@ -255,7 +255,7 @@ elif step == 5:
 
 
 # ============================================================
-# STEP 6 — RECOMMENDATIONS (NO MATCH %)
+# STEP 6 — RECOMMENDATIONS
 # ============================================================
 
 elif step >= 6:
@@ -267,7 +267,7 @@ elif step >= 6:
         mem.get("living"),
         mem.get("allergies"),
         mem.get("children"),
-        mem.get("size"),
+        mem.get("size")
     )
 
     if not recs:
@@ -278,16 +278,17 @@ elif step >= 6:
     else:
         st.markdown("Here are your **top 3 dog breeds** based on your choices:")
 
-        for breed in recs[:3]:
-            folder = _breed_to_folder(breed)
+        for breed in recs:
+            # folder name: lowercase, spaces -> underscores, no special chars
+            folder = breed.lower().replace(" ", "_").replace("’", "").replace("'", "")
             image_path = f"data/dog_images/{folder}/Image_1.jpg"
 
             col1, col2 = st.columns([1, 2])
 
             with col1:
                 try:
-                    st.image(image_path, width=250, caption=breed)
-                except Exception:
+                    st.image(image_path, width=220, caption=breed)
+                except:
                     st.warning(f"No image found for {breed}")
 
             with col2:
@@ -295,15 +296,14 @@ elif step >= 6:
                     f"""
                     ### 🐾 {breed}
 
-                    **Why this breed matches you:**
-                    - Energy level: **{mem.get('energy')}**
-                    - Living situation: **{mem.get('living')}**
-                    - Allergies/shedding match: **{mem.get('allergies')}**
-                    - Good with children: **{mem.get('children')}**
+                    **Why this breed may be a good fit:**
+                    - Energy level preference: **{mem.get('energy')}**
+                    - Home type: **{mem.get('living')}**
+                    - Allergies/shedding: **{mem.get('allergies')}**
+                    - Good with kids: **{mem.get('children')}**
                     - Preferred size: **{mem.get('size')}**
 
-                    **Social-post style description:**  
-                    _The {breed} is a lovely fit for your lifestyle — easy to love, fun to live with, and perfect for sharing cute moments on social media!_
+                    _The {breed} could be a great match based on your lifestyle and preferences!_
                     """
                 )
 
