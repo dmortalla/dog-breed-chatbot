@@ -237,32 +237,53 @@ elif step == 5:
 elif step >= 6:
     st.markdown("### 🎯 Your Top Dog Breed Matches")
 
-    cards = recommend_breeds_with_cards(
+    # Get the top 3 recommendations
+    recs = recommend_breeds(
         dog_breeds,
         mem.get("energy"),
         mem.get("living"),
         mem.get("allergies"),
         mem.get("children"),
-        mem.get("size"),
-        top_n=3,
+        mem.get("size")
     )
 
-    if not cards:
+    if not recs:
         st.warning(
             "I couldn't find good matches with the current preferences. "
             "Try resetting the conversation and choosing slightly broader options."
         )
     else:
-        st.markdown(
-            "Here are your **top 3 dog breeds** based on everything you selected:"
-        )
-        for i, card in enumerate(cards, start=1):
-            st.markdown(f"#### #{i} — {card['breed']}")
-            st.image(card["image_url"], caption=card["breed"])
-            st.markdown(card["summary"])
-            st.markdown(
-                f"[More photos of {card['breed']} in the dataset]({card['dataset_link']})"
-            )
+        st.markdown("Here are your **top 3 dog breeds** based on your choices:")
 
-    st.markdown("---")
+        for breed in recs[:3]:
+            breed_folder = breed.lower().replace(" ", "_")
+            image_path = f"data/dog_images/{breed_folder}/Image_1.jpg"
+
+            col1, col2 = st.columns([1, 2])
+
+            with col1:
+                try:
+                    st.image(image_path, width=250, caption=breed)
+                except:
+                    st.warning(f"No image found for {breed}")
+
+            with col2:
+                st.markdown(
+                    f"""
+                    ### 🐾 {breed}
+
+                    **Why this breed matches you:**
+                    - Energy level: **{mem.get('energy')}**
+                    - Living situation: **{mem.get('living')}**
+                    - Allergies/shedding match: **{mem.get('allergies')}**
+                    - Good with children: **{mem.get('children')}**
+                    - Preferred size: **{mem.get('size')}**
+
+                    **Social-post style description:**  
+                    _The {breed} is a perfect fit for your lifestyle — loyal, adorable, and great for sharing on social media!_
+                    """
+                )
+
+            st.markdown("---")
+
     st.info("Want to try different answers? Use **Reset Conversation** in the sidebar.")
