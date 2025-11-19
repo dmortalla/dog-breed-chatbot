@@ -1,77 +1,50 @@
-from __future__ import annotations
-
-import random
-import time
-from typing import Dict
-from urllib.parse import quote
-
 import streamlit as st
+from streamlit_mic_recorder import mic_recorder
+import time
+import random
+import requests
+from io import BytesIO
+from PIL import Image
 
-from recommender_engine import (
-    score_breeds,
-    top_n_breeds,
-    image_url_for_breed,
-    folder_for_breed,
+from trait_engine import parse_preferences
+from recommender_engine import recommend_breeds
+from chatbot_utils import (
+    add_user_msg,
+    add_assistant_msg,
+    load_data,
 )
 
-from trait_engine import (
-    parse_preferences,
-    classify_off_topic,
-    summarize_preferences,
-)
-
-# Try voice input (optional)
-try:
-    from streamlit_mic_recorder import mic_recorder
-    HAS_MIC = True
-except Exception:
-    HAS_MIC = False
-
-
-# ============================================================
-# THEMING & BASIC STYLING
-# ============================================================
+# -------------------------------
+# THEME
+# -------------------------------
 
 def apply_theme(theme: str) -> None:
-    """Apply improved light/dark theme with readable contrast."""
     if theme == "dark":
         css = """
         <style>
-        /* === Main background === */
         body {
-            background-color: #1e293b !important;  /* Soft slate gray */
-            color: #f1f5f9 !important;             /* Bright text */
-        }
-
-        /* === Sidebar === */
-        [data-testid="stSidebar"] {
-            background-color: #0f172a !important;  /* Dark navy */
-            color: #f8fafc !important;
-        }
-
-        /* === Chat bubbles === */
-        [data-testid="stChatMessage"] {
-            margin-bottom: 0.4rem;
-        }
-
-        [data-testid="stChatMessage"] > div {
-            border-radius: 16px;
-            padding: 8px 12px;
-        }
-
-        /* User bubble */
-        [data-testid="stChatMessage"][data-testid="stChatMessage-user"] > div {
-            background: #334155 !important;   /* Slate gray */
-            color: #f1f5f9 !important;        /* Soft white */
-        }
-
-        /* Assistant bubble */
-        [data-testid="stChatMessage"][data-testid="stChatMessage-assistant"] > div {
-            background: #0f172a !important;   /* Dark navy */
+            background-color: #1e293b !important;
             color: #f1f5f9 !important;
         }
-
-        /* Inputs */
+        [data-testid="stSidebar"] {
+            background-color: #0f172a !important;
+            color: #f8fafc !important;
+        }
+        [data-testid="stChatMessage"] {
+            margin-bottom: 0.3rem;
+        }
+        [data-testid="stChatMessage"] > div {
+            border-radius: 16px;
+            padding: 10px 14px;
+        }
+        [data-testid="stChatMessage-user"] > div {
+            background: #334155 !important;
+            color: #f1f5f9 !important;
+        }
+        [data-testid="stChatMessage-assistant"] > div {
+            background: #0f172a !important;
+            color: #f1f5f9 !important;
+        }
         .stTextInput input, .stChatInput textarea {
             background: #1e293b !important;
             color: #f8fafc !important;
@@ -82,345 +55,283 @@ def apply_theme(theme: str) -> None:
     else:
         css = """
         <style>
-        body {
-            background-color: #ffffff !important;
-            color: #111827 !important;
-        }
-        [data-testid="stSidebar"] {
-            background-color: #f9fafb !important;
-        }
-        [data-testid="stChatMessage"] {
-            margin-bottom: 0.4rem;
-        }
+        body { background-color: #ffffff !important; color: #111827 !important; }
+        [data-testid="stSidebar"] { background-color: #f9fafb !important; }
+        [data-testid="stChatMessage"] { margin-bottom: 0.3rem; }
         [data-testid="stChatMessage"] > div {
-            border-radius: 16px;
-            padding: 8px 12px;
+            border-radius: 16px; padding: 10px 14px;
         }
-        [data-testid="stChatMessage"][data-testid="stChatMessage-user"] > div {
-            background: #e5f3ff !important;
-        }
-        [data-testid="stChatMessage"][data-testid="stChatMessage-assistant"] > div {
-            background: #f3f4f6 !important;
-        }
+        [data-testid="stChatMessage-user"] > div { background: #e5f3ff !important; }
+        [data-testid="stChatMessage-assistant"] > div { background: #f3f4f6 !important; }
         </style>
         """
     st.markdown(css, unsafe_allow_html=True)
 
-# ============================================================
-# DOG FACTS
-# ============================================================
 
-def dog_fact() -> str:
-    facts = [
-        "A dog’s nose print is unique — like a fingerprint!",
-        "Greyhounds can reach speeds up to 45 mph.",
-        "The Basenji is known as the 'barkless dog.'",
-        "Puppies are born blind and deaf, but develop quickly.",
-        "Some dogs can learn more than 1,000 words.",
+# -------------------------------
+# SAMPLE DOG FACTS
+# -------------------------------
+DOG_FACTS = [
+    "Dogs can learn over 100 words 🐶🧠",
+    "Some dogs can smell medical conditions 👃✨",
+    "Greyhounds can reach speeds of 45 mph! ⚡",
+    "A dog's nose print is as unique as a fingerprint.",
+]
+
+
+# -------------------------------
+# REPEAT TRAIT ACKNOWLEDGEMENT
+# -------------------------------
+
+def detect_repeated_traits(user_text: str, prefs: dict, new_prefs: dict) -> str:
+    replies = {
+        "energy": "I remember your preferred energy level — thanks for confirming! ⚡👌",
+        "home": "I've already noted your living situation — all good! 🏡",
+        "allergies": "Got it — you mentioned shedding earlier, and I’ve kept that in mind 👌",
+        "kids": "You already told me about children — thanks for confirming! 🧒🐶",
+    }
+    msgs = []
+    for trait in new_prefs:
+        if trait in prefs and replies.get(trait):
+            msgs.append(replies[trait])
+    return "\n".join(msgs)
+
+
+# -------------------------------
+# OFF TOPIC CLASSIFIER (ENHANCED)
+# -------------------------------
+
+def classify_off_topic(text: str, extracted: dict) -> bool:
+    t = text.lower().strip()
+
+    if extracted:
+        return False
+
+    confirmations = [
+        "yes", "yep", "yeah", "sure", "ok", "okay",
+        "sounds good", "correct", "right", "fine"
     ]
-    return random.choice(facts)
+    if any(t.startswith(c) for c in confirmations):
+        return False
+
+    dog_keywords = [
+        "dog", "puppy", "breed", "shedding", "hair", "fur",
+        "energy", "calm", "quiet", "active", "yard",
+        "apartment", "house", "kids", "children",
+        "family", "allergy", "hypoallergenic",
+    ]
+    if any(k in t for k in dog_keywords):
+        return False
+
+    return True
 
 
-# ============================================================
-# RECOMMENDER DISPLAY
-# ============================================================
+# -------------------------------
+# MEMORY SUMMARY (ENHANCED)
+# -------------------------------
 
-def render_breed_card(breed: str, score: float) -> None:
-    """Display one breed recommendation with image and dataset link."""
-    st.markdown(f"### 🐕 {breed} — Match score: {score:.1f}/100")
+def render_memory_summary(prefs: dict) -> str:
+    text = ["Here’s what I currently know about you so far: 👇\n"]
 
-    img_url = image_url_for_breed(breed)
-    if img_url:
-        st.image(img_url, width=320, caption=breed)
+    if "energy" in prefs:
+        em = {1: "low", 3: "medium", 5: "high"}
+        text.append(f"• Preferred energy level: **{em[prefs['energy']]}**")
 
-    folder = folder_for_breed(breed)
-    gh_url = (
-        "https://github.com/maartenvandenbroeck/"
-        "Dog-Breeds-Dataset/tree/master/"
-        f"{quote(folder)}"
-    )
-    st.markdown(f"[📸 More photos of **{breed}** in the dataset]({gh_url})")
-    st.markdown("---")
+    if "home" in prefs:
+        hm = {1: "small apartment", 2: "apartment", 3: "house with a yard"}
+        text.append(f"• Living situation: **{hm[prefs['home']]}**")
 
+    if "allergies" in prefs:
+        am = {1: "hypoallergenic", 2: "low-shedding", 4: "shedding ok"}
+        text.append(f"• Allergy/shedding preference: **{am[prefs['allergies']]}**")
 
-# ============================================================
-# STREAMLIT CONFIG
-# ============================================================
+    if "kids" in prefs:
+        km = {1: "yes", 0: "no"}
+        text.append(f"• Needs to be good with kids: **{km[prefs['kids']]}**")
 
-st.set_page_config(
-    page_title="Dog Lover Chatbot — Find Your Perfect Dog Breed",
-    page_icon="🐶",
-    layout="centered",
-)
+    text.append("\nIf I missed something, please tell me now. 🐶✨")
 
-state = st.session_state
-state.setdefault("messages", [])
-state.setdefault("preferences", {})
-state.setdefault("step", 0)
-state.setdefault("theme", "light")
-state.setdefault("results", None)
-state.setdefault("animate_last", False)  # for typing animation
+    return "\n".join(text)
 
 
-# ============================================================
+# -------------------------------
+# IMAGE LOADER
+# -------------------------------
+
+def load_breed_image(breed: str) -> Image.Image:
+    folder = breed.replace(" ", "_")
+    url = f"https://raw.githubusercontent.com/maartenvandenbroeck/Dog-Breeds-Dataset/main/{folder}/Image_1.jpg"
+    try:
+        r = requests.get(url, timeout=5)
+        img = Image.open(BytesIO(r.content))
+        return img
+    except:
+        return None
+
+
+# -------------------------------
 # SIDEBAR
-# ============================================================
+# -------------------------------
 
-with st.sidebar:
-    st.header("🎛️ Controls")
+def render_sidebar():
+    st.sidebar.title("🐾 Dog Lover Settings")
 
-    # Theme toggle
-    theme_choice = st.radio("Theme", ["Light", "Dark"])
-    state.theme = "light" if theme_choice == "Light" else "dark"
+    theme_choice = st.sidebar.radio(
+        "Theme:", ["light", "dark"], index=0
+    )
+    apply_theme(theme_choice)
 
-    st.markdown("---")
+    st.sidebar.markdown("### 🎙 Voice Input")
+    st.sidebar.info("Tap to record your message")
+    voice = mic_recorder(start_prompt="Start recording", stop_prompt="Stop", just_once=False)
+    return voice
 
-    # Voice input
-    st.subheader("🎙️ Voice Input")
-    if HAS_MIC:
-        st.caption("Record a short message and I’ll treat it as chat input.")
-        audio = mic_recorder(
-            start_prompt="Start Recording",
-            stop_prompt="Stop",
-            key="voice",
+
+# -------------------------------
+# TYPING SIMULATION
+# -------------------------------
+
+def typing(msg: str):
+    add_assistant_msg("…")
+    time.sleep(0.15)
+    st.session_state.messages.pop()  # remove dots
+    add_assistant_msg(msg)
+
+
+# -------------------------------
+# APP MAIN
+# -------------------------------
+
+def main():
+    st.title("🐶 Dog Lover — Your Personalized Dog Matchmaker")
+
+    voice_text = render_sidebar()
+
+    # Init states
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+        st.session_state.preferences = {}
+        st.session_state.awaiting_final_confirmation = False
+
+        intro = (
+            "Hi there! I'm **Dog Lover**, your friendly canine matchmaker. 🐾\n\n"
+            "Tell me about your lifestyle and what you're hoping for in a dog. "
+            "I'll ask questions only if needed."
         )
-        if isinstance(audio, dict) and audio.get("text"):
-            state.messages.append({"role": "user", "content": audio["text"]})
-            st.rerun()
+        add_assistant_msg(intro)
+
+    # Display history
+    for role, content in st.session_state.messages:
+        if role == "user":
+            st.chat_message("user").write(content)
+        else:
+            st.chat_message("assistant").write(content)
+
+    # Process voice
+    if voice_text:
+        user_msg = voice_text["text"]
     else:
-        st.caption("Install `streamlit-mic-recorder` to enable voice input.")
+        user_msg = st.chat_input("Type something about your dream dog…")
 
-    st.markdown("---")
+    if not user_msg:
+        return
 
-    # Reset conversation
-    if st.button("🔄 Reset Conversation"):
-        state.messages = []
-        state.preferences = {}
-        state.step = 0
-        state.results = None
-        state.animate_last = False
-        st.rerun()
+    add_user_msg(user_msg)
 
-    st.markdown("---")
-
-    # Memory summary (sidebar)
-    st.subheader("🧠 What I Know So Far")
-    st.write(summarize_preferences(state.preferences))
-
-    st.markdown("---")
-
-    # Collapsible chat history
-    with st.expander("📜 Chat History"):
-        if not state.messages:
-            st.write("No messages yet.")
+    # Handle confirmation stage
+    if st.session_state.awaiting_final_confirmation:
+        if any(x in user_msg.lower() for x in ["yes", "correct", "go ahead", "proceed"]):
+            st.session_state.awaiting_final_confirmation = False
         else:
-            for m in state.messages:
-                who = "You" if m["role"] == "user" else "Dog Lover"
-                st.markdown(f"**{who}:** {m['content']}")
-
-
-# Apply theme after sidebar
-apply_theme(state.theme)
-
-
-# ============================================================
-# MAIN CHAT UI
-# ============================================================
-
-st.title("🐶 Dog Lover Chatbot — Find Your Perfect Dog Breed!")
-st.caption("Tell me about your lifestyle and preferences — I’ll match you with your ideal dog!")
-
-# Small “memory snapshot” indicator in the main area
-prefs = state.preferences
-snapshot_labels = []
-if "energy" in prefs:
-    snapshot_labels.append("⚡ Energy")
-if "home" in prefs:
-    snapshot_labels.append("🏠 Home")
-if "allergies" in prefs:
-    snapshot_labels.append("🌿 Allergies")
-if "kids" in prefs:
-    snapshot_labels.append("👶 Kids")
-
-if snapshot_labels:
-    st.markdown("**Memory snapshot:** " + " · ".join(snapshot_labels))
-else:
-    st.markdown("_Memory snapshot: I’m still getting to know you…_")
-
-st.markdown("---")
-
-# Initial greeting
-if not state.messages:
-    greeting = (
-        "Hi there! I’m **Dog Lover**, your friendly dog-matching companion. 🐾\n\n"
-        "Tell me about your home, activity level, allergies, or children — "
-        "and I’ll ask a few follow-up questions to find your perfect breed."
-    )
-    state.messages.append({"role": "assistant", "content": greeting})
-
-# Render chat messages with typing animation for the latest assistant reply
-messages = state.messages
-for idx, msg in enumerate(messages):
-    role = msg["role"]
-    is_last_assistant = (
-        state.animate_last
-        and role == "assistant"
-        and idx == len(messages) - 1
-    )
-
-    with st.chat_message("assistant" if role == "assistant" else "user"):
-        if is_last_assistant:
-            # Typing animation for the latest assistant message only
-            placeholder = st.empty()
-            text = msg["content"]
-            typed = ""
-            for word in text.split(" "):
-                typed += word + " "
-                placeholder.markdown(typed + "▌")
-                time.sleep(0.03)
-            placeholder.markdown(text)
-        else:
-            st.markdown(msg["content"])
-
-# Once drawn, turn off animation for next rerun
-state.animate_last = False
-
-# Chat input
-user_input = st.chat_input("Describe your lifestyle or dream dog…")
-
-
-# ============================================================
-# CHAT / CONVERSATION LOGIC
-# ============================================================
-
-if user_input:
-    state.messages.append({"role": "user", "content": user_input})
-
-    step = state.step
-    new_prefs: Dict[str, int] = parse_preferences(user_input)
-
-    # Off-topic detection
-    if classify_off_topic(user_input, step, new_prefs):
-        reply = (
-            "I’m sorry, but that’s a bit outside what I can do. "
-            "Let’s get back to how I can help you pick the best dog for you. 🐾"
-        )
-        state.messages.append({"role": "assistant", "content": reply})
-        state.animate_last = True
-        st.rerun()
-
-    # Merge newly extracted preferences
-    state.preferences.update(new_prefs)
-
-    # === STEP 0: Ask about energy level ===
-    if step == 0:
-        reply = (
-            "Awesome! Let’s start with **energy level**.\n\n"
-            "Would your ideal dog be **low**, **medium**, or **high** energy? 🐕⚡"
-        )
-        state.messages.append({"role": "assistant", "content": reply})
-        state.step = 1
-        state.animate_last = True
-        st.rerun()
-
-    # === STEP 1: Ask about living situation (skip if already known) ===
-    elif step == 1:
-        if "home" in state.preferences:
-            reply = (
-                "Great — I’ve already noted your living situation. 🏠\n\n"
-                "Let’s now consider the issue of **allergies**.\n\n"
-                "Do you prefer **low-shedding** or **hypoallergenic** dogs? 🌿🐕"
-            )
-            state.messages.append({"role": "assistant", "content": reply})
-            state.step = 2
-            state.animate_last = True
-            st.rerun()
-        else:
-            reply = (
-                "Great! Now let’s consider your **living situation**.\n\n"
-                "Do you live in a **small apartment**, a **standard apartment**, "
-                "or a **house with a yard**? 🏠"
-            )
-            state.messages.append({"role": "assistant", "content": reply})
-            state.step = 2
-            state.animate_last = True
-            st.rerun()
-
-    # === STEP 2: Ask about allergies (skip if already known) ===
-    elif step == 2:
-        if "allergies" in state.preferences:
-            reply = (
-                "Got it — I’ve already noted your allergy preferences. 🌿✅\n\n"
-                "The presence of **children** could be a factor.\n\n"
-                "Should your dog be especially **good with young children**? "
-                "(yes or no) 👶🐶"
-            )
-            state.messages.append({"role": "assistant", "content": reply})
-            state.step = 3
-            state.animate_last = True
-            st.rerun()
-        else:
-            reply = (
-                "Let’s now consider the issue of **allergies**.\n\n"
-                "Do you prefer **low-shedding** or **hypoallergenic** dogs? 🌿🐕"
-            )
-            state.messages.append({"role": "assistant", "content": reply})
-            state.step = 3
-            state.animate_last = True
-            st.rerun()
-
-    # === STEP 3: Ask about kid-friendliness (skip if already known) ===
-    elif step == 3:
-        if "kids" in state.preferences:
-            # Already know about kids — either recommend or ask for a bit more
-            if len(state.preferences) >= 4:
-                scores = score_breeds(state.preferences)
-                state.results = top_n_breeds(scores, n=3)
-                reply = (
-                    "Amazing — I think I have enough information now! 🐾✨\n\n"
-                    "Here are your **top dog breed matches**:"
-                )
-                state.messages.append({"role": "assistant", "content": reply})
-                state.animate_last = True
+            added = parse_preferences(user_msg)
+            if added:
+                st.session_state.preferences.update(added)
+                typing("Thanks! Updated your preferences. 👍")
             else:
-                reply = (
-                    "We’re almost there! Tell me anything else about your lifestyle "
-                    "and I’ll refine the match."
-                )
-                state.messages.append({"role": "assistant", "content": reply})
-                state.animate_last = True
-            st.rerun()
-        else:
-            reply = (
-                "The presence of **children** could be a factor.\n\n"
-                "Should your dog be especially **good with young children**? "
-                "(yes or no) 👶🐶"
-            )
-            state.messages.append({"role": "assistant", "content": reply})
-            state.step = 4
-            state.animate_last = True
-            st.rerun()
+                typing("No worries — I’ll proceed.")
+            st.session_state.awaiting_final_confirmation = False
 
-    # === STEP 4+: Compute recommendations ===
-    else:
-        scores = score_breeds(state.preferences)
-        state.results = top_n_breeds(scores, n=3)
-        reply = (
-            "Awesome, I think I have enough information now! 🐾✨\n\n"
-            "Here are your **top dog breed matches** based on everything you’ve told me:"
+    # Extract new traits
+    new_prefs = parse_preferences(user_msg)
+
+    # Off-topic
+    if classify_off_topic(user_msg, new_prefs):
+        typing("I’m sorry, but that’s beyond what I can help with. Let’s get back to finding your perfect dog! 🐶")
+        return
+
+    # Repeated traits
+    repeat_msg = detect_repeated_traits(user_msg, st.session_state.preferences, new_prefs)
+    if repeat_msg:
+        typing(repeat_msg)
+
+    # Update traits
+    st.session_state.preferences.update(new_prefs)
+
+    prefs = st.session_state.preferences
+
+    # Required traits to recommend
+    REQUIRED = ["energy", "home", "allergies", "kids"]
+    if all(k in prefs for k in REQUIRED):
+
+        summary = render_memory_summary(prefs)
+        typing(summary)
+
+        st.session_state.awaiting_final_confirmation = True
+        return
+
+    # Ask next missing trait
+    if "home" not in prefs:
+        typing("Let's talk about your living situation. Do you live in a small apartment, apartment, or a house with a yard?")
+        return
+
+    if "energy" not in prefs:
+        typing("How active would you like your dog to be? Low energy, medium, or high-energy companion?")
+        return
+
+    if "allergies" not in prefs:
+        typing("Let’s now consider allergies. Do you prefer a hypoallergenic or low-shedding dog?")
+        return
+
+    if "kids" not in prefs:
+        typing("Do you need your dog to be especially good with young children?")
+        return
+
+    # Recommendations
+    if not st.session_state.awaiting_final_confirmation:
+        matches = recommend_breeds(
+            st.session_state.data_breeds,
+            prefs
         )
-        state.messages.append({"role": "assistant", "content": reply})
-        state.animate_last = True
-        st.rerun()
+
+        if not matches:
+            typing("I couldn’t find a perfect match, but I can try again if you adjust your preferences.")
+            return
+
+        typing("Great! Based on everything you shared, here are your top dog matches 🐾✨")
+
+        for breed in matches:
+            st.subheader(breed)
+            img = load_breed_image(breed)
+            if img:
+                st.image(img, use_column_width=True)
+            else:
+                st.info("(Image unavailable)")
+
+            st.markdown(f"**{random.choice(DOG_FACTS)}**")
+
+        # Reset for next conversation
+        st.session_state.preferences = {}
+        st.session_state.awaiting_final_confirmation = False
 
 
-# ============================================================
-# SHOW RESULTS
-# ============================================================
+# -------------------------------
+# Load Data Once
+# -------------------------------
 
-if state.results:
-    st.markdown("## 🎯 Your Top Matches (with photos)")
-    for breed, score in state.results:
-        render_breed_card(breed, score)
+if "data_breeds" not in st.session_state:
+    dog_breeds, trait_descriptions = load_data()
+    st.session_state.data_breeds = dog_breeds
 
-    st.markdown(f"**Bonus dog fact:** {dog_fact()}")
+# -------------------------------
+main()
+
