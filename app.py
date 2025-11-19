@@ -99,14 +99,12 @@ if not st.session_state.get("intro_shown", False):
 # ============================================================
 
 for role, content in st.session_state.messages:
-    # Skip the intro message if shown already
     if (
         st.session_state.get("intro_shown", False)
         and role == "assistant"
         and content.startswith("Hi there! I'm **Dog Lover**")
     ):
         continue
-
     st.chat_message(role).markdown(content)
 
 
@@ -255,7 +253,6 @@ elif step == 5:
 elif step >= 6:
     st.markdown("### 🎯 Your Top Dog Breed Matches")
 
-    # FIXED: use recommend_breeds_with_cards (not recommend_breeds)
     cards = recommend_breeds_with_cards(
         dog_breeds,
         mem.get("energy"),
@@ -263,7 +260,7 @@ elif step >= 6:
         mem.get("allergies"),
         mem.get("children"),
         mem.get("size"),
-        top_n=3
+        top_n=3,
     )
 
     if not cards:
@@ -274,10 +271,13 @@ elif step >= 6:
     else:
         st.markdown("Here are your **top 3 dog breeds** based on your choices:")
 
-        for card in cards:
+        for i, card in enumerate(cards, start=1):
             breed = card["breed"]
-            image_url = card["image_url"]     # FIXED KEY
-            summary = card["summary"]         # FIXED KEY
+            image_url = card["image_url"]
+            match_pct = card["match_pct"]
+            summary = card["summary"]
+
+            st.markdown(f"#### #{i} — {breed} ({match_pct}% match)")
 
             col1, col2 = st.columns([1, 2])
 
@@ -285,14 +285,9 @@ elif step >= 6:
                 st.image(image_url, width=250, caption=breed)
 
             with col2:
-                st.markdown(
-                    f"""
-                    ### 🐾 {breed}
-
-                    {summary}
-                    """
-                )
+                st.markdown(summary)
 
             st.markdown("---")
 
     st.info("Want to try different answers? Use **Reset Conversation** in the sidebar.")
+
