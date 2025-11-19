@@ -1,11 +1,11 @@
-"""Streamlit app for the Dog Breed Matchmaker chatbot.
+"""
+Streamlit app for the Dog Breed Matchmaker.
 
 This app lets users select their lifestyle and preferences in the sidebar
 and then recommends the top 3 matching dog breeds based on trait data.
 """
 
 from typing import Dict
-
 import streamlit as st
 import pandas as pd
 
@@ -25,7 +25,8 @@ def build_user_profile(
     barking: str,
     stranger: str,
 ) -> Dict[str, int]:
-    """Build a simple user profile from sidebar answers.
+    """
+    Build a simple user profile from sidebar answers.
 
     Args:
         energy: Text describing energy level (Low, Medium, High).
@@ -47,7 +48,7 @@ def build_user_profile(
         "Shedding Level": parse_level_answer(shedding_tolerance),
         "Barking Level": parse_level_answer(barking),
         "Openness To Strangers": parse_level_answer(stranger),
-        # Reasonable defaults that work for many users.
+        # Defaults
         "Adaptability Level": 4,
         "Trainability Level": 4,
     }
@@ -55,30 +56,32 @@ def build_user_profile(
 
 
 def main() -> None:
-    """Run the Streamlit web application.
+    """
+    Run the Streamlit web application.
 
     The app:
     - Loads breed and trait description data.
     - Lets the user select preferences in a sidebar.
     - Computes match scores for all breeds.
     - Shows the top 3 matching breeds with explanations and image links.
-    """"
+    """
     st.set_page_config(
         page_title="Dog Breed Matchmaker",
         page_icon="🐶",
         layout="centered",
     )
+
     st.title("🐕 Dog Breed Matchmaker")
     st.write(
         "Answer a few quick questions and discover the dog breeds that "
         "match your lifestyle!"
     )
 
-    # Load data once per session.
+    # Load CSVs
     dog_breeds, trait_descriptions = load_data()
     numeric_breeds = clean_breed_traits(dog_breeds)
 
-    # Sidebar questions.
+    # Sidebar questions
     st.sidebar.header("Your Lifestyle & Preferences")
 
     energy = st.sidebar.selectbox(
@@ -118,7 +121,7 @@ def main() -> None:
             stranger=stranger,
         )
 
-        # Compute scores and get top 3 breeds.
+        # Compute scores
         results = compute_match_scores(numeric_breeds, user_profile)
         top3 = results.head(3)
 
@@ -142,23 +145,20 @@ def main() -> None:
             st.markdown(f"[See {breed} photos here]({img_url})")
 
             descriptions = [
-                describe_trait(trait_descriptions, t, row[t])
-                for t in traits_to_show
-                if t in row.index
+                describe_trait(trait_descriptions, trait, row[trait])
+                for trait in traits_to_show
+                if trait in row.index
             ]
 
             st.write("**Why this breed could fit you:**")
             if descriptions:
                 st.write("• " + "\n• ".join(descriptions[:4]))
             else:
-                st.write("Trait information is not available for this breed.")
+                st.write("Trait information not available.")
 
             st.write("---")
     else:
-        st.info(
-            "Use the sidebar to enter your preferences, then click "
-            "**Find My Top 3 Breeds! 🐾**"
-        )
+        st.info("Use the sidebar to enter your preferences, then click **Find My Top 3 Breeds! 🐾**")
 
 
 if __name__ == "__main__":
