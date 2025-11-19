@@ -60,6 +60,7 @@ with st.sidebar:
         st.session_state.messages = []
         init_memory()
         st.session_state.wizard_step = 1
+        st.session_state.intro_shown = False
         _safe_rerun()
 
     st.markdown("### 🧠 Your Preferences So Far")
@@ -90,11 +91,22 @@ if not st.session_state.get("intro_shown", False):
     )
     add_assistant_msg(intro)
     st.chat_message("assistant").markdown(intro)
-    st.session_state.intro_shown = True  # <-- prevents duplication
+    st.session_state.intro_shown = True
 
 
-# Render existing messages normally
+# ============================================================
+# RENDER EXISTING MESSAGES (avoid intro duplication)
+# ============================================================
+
 for role, content in st.session_state.messages:
+    # Skip the intro message if shown already
+    if (
+        st.session_state.get("intro_shown", False)
+        and role == "assistant"
+        and content.startswith("Hi there! I'm **Dog Lover**")
+    ):
+        continue
+
     st.chat_message(role).markdown(content)
 
 
@@ -243,7 +255,7 @@ elif step == 5:
 elif step >= 6:
     st.markdown("### 🎯 Your Top Dog Breed Matches")
 
-    recs = recommend_breeds(
+    recs = recommend_breeds_with_cards(
         dog_breeds,
         mem.get("energy"),
         mem.get("living"),
@@ -260,36 +272,19 @@ elif step >= 6:
     else:
         st.markdown("Here are your **top 3 dog breeds** based on your choices:")
 
-        for breed in recs[:3]:
-            breed_folder = breed.lower().replace(" ", "_")
-            image_path = f"data/dog_images/{breed_folder}/Image_1.jpg"
+        for card in recs[:3]:
+            breed = card["breed"]
+            image = card["image"]
+            summary = card["summary"]
 
             col1, col2 = st.columns([1, 2])
 
             with col1:
-                try:
-                    st.image(image_path, width=250, caption=breed)
-                except:
-                    st.warning(f"No image found for {breed}")
+                st.image(image, width=250, caption=breed)
 
             with col2:
-                st.markdown(
-                    f"""
-                    ### 🐾 {breed}
-
-                    **Why this breed matches you:**
-                    - Energy level: **{mem.get('energy')}**
-                    - Living situation: **{mem.get('living')}**
-                    - Allergies/shedding match: **{mem.get('allergies')}**
-                    - Good with children: **{mem.get('children')}**
-                    - Preferred size: **{mem.get('size')}**
-
-                    **Social-post style description:**  
-                    _The {breed} is a perfect fit for your lifestyle — loyal, adorable, and great for sharing on social media!_
-                    """
-                )
+                st.markdown(summary)
 
             st.markdown("---")
 
     st.info("Want to try different answers? Use **Reset Conversation** in the sidebar.")
-
