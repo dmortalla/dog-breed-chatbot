@@ -1,159 +1,193 @@
-# -------------------------------------------------------
-# Dog Lover Chatbot — Streamlit Frontend
-#
-# This app helps match users with the best dog breeds
-# based on lifestyle preferences such as:
-# - energy level
-# - living situation
-# - allergies / shedding
-# - good with kids
-#
-# Sidebar provides:
-# - Theme toggle
-# - Reset conversation
-#
-# Chat area:
-# - Greeting
-# - Conversation flow
-# -------------------------------------------------------
-
 import streamlit as st
-from trait_engine import (
-    extract_traits_from_message,
-    merge_traits,
+from chatbot_utils import (
+    add_user_msg,
+    add_assistant_msg,
+    render_chat_history,
+    load_data,
+    init_memory,
+    update_memory,
+    memory_summary,
+    extract_traits,
+    typing_response,
     classify_off_topic
 )
 from recommender_engine import recommend_breeds
-from chatbot_utils import typing_response
 
-# -------------------------------------------------------
+
+# ============================================================
 # PAGE CONFIG
-# -------------------------------------------------------
+# ============================================================
+
 st.set_page_config(
     page_title="Dog Lover Chatbot",
     page_icon="🐶",
-    layout="wide"
+    layout="centered"
 )
 
-# -------------------------------------------------------
-# SESSION STATE
-# -------------------------------------------------------
+
+# ============================================================
+# INITIALIZATION
+# ============================================================
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "traits" not in st.session_state:
-    st.session_state.traits = {}
+if "memory" not in st.session_state:
+    init_memory()
 
-if "theme" not in st.session_state:
-    st.session_state.theme = "light"
+dog_breeds, trait_descriptions = load_data()
 
-# -------------------------------------------------------
+
+# ============================================================
 # SIDEBAR
-# -------------------------------------------------------
+# ============================================================
+
 with st.sidebar:
-    st.markdown("## 🐾 Dog Lover Settings")
+    st.header("⚙️ Settings")
 
-    # Theme toggle
-    st.markdown("**Theme:**")
-    theme_choice = st.radio("Theme", ["light", "dark"], index=0 if st.session_state.theme == "light" else 1)
-    st.session_state.theme = theme_choice
-
-    # Reset conversation
-    st.markdown(" ")
-    if st.button("🔄 Reset Conversation"):
+    reset = st.button("🔄 Reset Conversation")
+    if reset:
         st.session_state.messages = []
-        st.session_state.traits = {}
+        init_memory()
         st.experimental_rerun()
 
-# -------------------------------------------------------
-# APPLY THEME
-# -------------------------------------------------------
-if st.session_state.theme == "dark":
-    st.markdown("""
-    <style>
-        body, [class*="stApp"] {
-            background-color: #1e1e1e !important;
-            color: #ffffff !important;
-        }
-        .stChatMessage {
-            background-color: #2c2c2c !important;
-        }
-    </style>
-    """, unsafe_allow_html=True)
+    st.markdown("### 🧠 Your Preferences")
+    st.info(memory_summary())
 
-# -------------------------------------------------------
-# HEADER
-# -------------------------------------------------------
-st.markdown("# 🐶 Dog Lover Chatbot — Find Your Perfect Dog Breed!")
-st.markdown("Tell me about your lifestyle and preferences. I’ll match you with the perfect dog!")
+    st.markdown("---")
+    st.markdown("### 🌗 Theme")
+    theme_choice = st.radio("Choose theme:", ["Light", "Dark"], index=0)
+    if theme_choice == "Dark":
+        st.markdown(
+            """
+            <style>
+            body, .stApp { 
+                background-color: #1a1a1a !important;
+                color: #f2f2f2 !important;
+            }
+            .stChatMessage, .stMarkdown { color: #f2f2f2 !important; }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
 
-# -------------------------------------------------------
-# CHAT DISPLAY
-# -------------------------------------------------------
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.write(msg["content"])
+    st.markdown("---")
+    render_chat_history()
 
-# -------------------------------------------------------
-# PROCESSING LOGIC
-# -------------------------------------------------------
+
+# ============================================================
+# GREETING (only once)
+# ============================================================
+
+if len(st.session_state.messages) == 0:
+    intro = (
+        "👋 **Hi there! I'm Dog Lover**, your friendly dog-match chatbot!\n\n"
+        "Tell me a little about your lifestyle and preferences — "
+        "your energy level, where you live, allergies, children, or anything else.\n\n"
+        "I'll ask follow-up questions when needed and recommend the best dog breeds for you!"
+    )
+    add_assistant_msg(intro)
+    st.chat_message("assistant").markdown(intro)
+
+
+# ============================================================
+# PROCESS USER MESSAGE
+# ============================================================
+
 def process_message(user_msg: str):
-    # Save user message
-    st.session_state.messages.append({"role": "user", "content": user_msg})
+    """Main message-processing pipeline."""
 
-    # 1. Off-topic check
+    # If message is off-topic → gently redirect
     if classify_off_topic(user_msg):
-        bot_reply = "I’m sorry, but that’s a bit outside what I can help with. Let’s stay focused on finding your perfect dog. 🐾"
-        st.session_state.messages.append({"role": "assistant", "content": bot_reply})
+        reply = (
+            "😅 I’m sorry, but that’s outside what I can help with.\n\n"
+            "Let’s get back to finding the *perfect dog* for you! 🐶❤️"
+        )
+        add_assistant_msg(reply)
+        st.chat_message("assistant").markdown(reply)
         return
 
-    # 2. Extract traits
-    new_traits = extract_traits_from_message(user_msg)
+    # Extract traits
+    new_traits = extract_traits(user_msg)
 
-    # Merge traits
-    st.session_state.traits = merge_traits(st.session_state.traits, new_traits)
+    # Update memory ONLY for traits the user mentioned
+    for key, value in new_traits.items():
+        update_memory(key, value)
 
-    # 3. If we have enough info → Recommend
-    if len(st.session_state.traits) >= 3:
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": typing_response("Here’s what I currently know about you:\n" +
-                                      "\n".join([f"• **{k}**: {v}" for k, v in st.session_state.traits.items()]) +
-                                      "\n\nLet me suggest some breeds for you! 🐕✨")
-        })
-
-        recs = recommend_breeds(st.session_state.traits)
-        rec_text = typing_response("Here are my top matches:\n" + "\n".join([f"🐶 {r}" for r in recs]))
-        st.session_state.messages.append({"role": "assistant", "content": rec_text})
+    # If no new traits were detected → ask for clarification
+    if not new_traits:
+        reply = (
+            "Thanks! Could you tell me a bit more about your lifestyle "
+            "or preferences? For example:\n"
+            "• your energy level\n"
+            "• where you live\n"
+            "• allergies / shedding\n"
+            "• children\n"
+            "• preferred dog size"
+        )
+        add_assistant_msg(reply)
+        st.chat_message("assistant").markdown(reply)
         return
 
-    # 4. Otherwise continue asking questions
-    next_q = next_question(st.session_state.traits)
-    st.session_state.messages.append({"role": "assistant", "content": typing_response(next_q)})
+    # If all major traits are collected → offer summary + recommendations
+    mem = st.session_state.memory
+    ready = all([
+        mem.get("energy"),
+        mem.get("living"),
+        mem.get("allergies"),
+        mem.get("children"),
+        mem.get("size")
+    ])
 
-# -------------------------------------------------------
-# NEXT QUESTION FLOW
-# -------------------------------------------------------
-def next_question(traits):
-    if "energy" not in traits:
-        return "Awesome! Let’s start with **energy level**.\n\nWould your ideal dog be **low**, **medium**, or **high** energy? 🐕‍🦺⚡"
+    if ready:
+        summary = (
+            "✨ **Here’s what I currently know about you:**\n\n"
+            f"{memory_summary()}\n\n"
+            "If I missed something, just let me know!"
+        )
+        add_assistant_msg(summary)
+        st.chat_message("assistant").markdown(summary)
 
-    if "living_space" not in traits:
-        return "Great — I’ve already noted your living situation. 🏡\n\nDo you live in a **small apartment**, **standard apartment**, or a **house with a yard**? 🏠"
+        # Now recommend
+        recs = recommend_breeds(
+            dog_breeds,
+            mem.get("energy"),
+            mem.get("living"),
+            mem.get("allergies"),
+            mem.get("children"),
+            mem.get("size")
+        )
 
-    if "shedding" not in traits:
-        return "Let’s talk about **allergies** and **shedding**.\n\nDo you prefer **low-shedding** or **hypoallergenic** dogs? 🌿🐩"
+        if len(recs) == 0:
+            msg = "Hmm… I don’t have any perfect matches yet. Tell me more!"
+            add_assistant_msg(msg)
+            st.chat_message("assistant").markdown(msg)
+            return
 
-    if "children" not in traits:
-        return "The presence of **children** could be a factor.\n\nShould your dog be especially **good with young children**? (yes or no) 👶🐶"
+        msg = "🐾 **Here are the top dog breeds that match your preferences:**"
+        add_assistant_msg(msg)
+        st.chat_message("assistant").markdown(msg)
 
-    return "Tell me anything else about your ideal dog!"
+        # Show list (no images here — images handled by recommender_engine)
+        for breed in recs:
+            st.chat_message("assistant").markdown(f"• **{breed}**")
 
-# -------------------------------------------------------
-# USER INPUT
-# -------------------------------------------------------
-user_msg = st.chat_input("Tell me about your lifestyle or dog preferences...")
+        return
+
+    # If some traits still missing → keep chatting
+    reply = "Great! Tell me more about your preferences 😊"
+    add_assistant_msg(reply)
+    st.chat_message("assistant").markdown(reply)
+
+
+# ============================================================
+# CHAT INPUT
+# ============================================================
+
+user_msg = st.chat_input("Type your message here…")
 
 if user_msg:
+    add_user_msg(user_msg)
+    st.chat_message("user").markdown(user_msg)
     process_message(user_msg)
-    st.experimental_rerun()
+
