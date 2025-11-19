@@ -4,14 +4,10 @@ from typing import Dict
 def extract_traits_from_message(message: str) -> Dict[str, str]:
     """
     Extract dog-related preference traits from a user message.
-
-    Traits used by app.py:
-      - energy: "low" | "medium" | "high"
-      - living_space: "small apartment" | "standard apartment" | "house with a yard"
-      - shedding: "hypoallergenic" | "low-shedding" | "shedding ok"
-      - children: "yes" | "no"
     """
-    msg = message.lower()
+    # --- SAFETY FIX: force message into a lowercase string ---
+    msg = str(message).lower().strip()
+
     traits: Dict[str, str] = {}
 
     # -------- ENERGY --------
@@ -22,7 +18,6 @@ def extract_traits_from_message(message: str) -> Dict[str, str]:
     elif any(p in msg for p in ["high energy", "very active", "energetic", "hyper"]):
         traits["energy"] = "high"
     else:
-        # fallback on single-word mentions if they look like energy
         if "low energy" in msg or ("low" in msg and "shed" not in msg):
             traits.setdefault("energy", "low")
         if "medium energy" in msg or "medium" in msg:
@@ -43,26 +38,12 @@ def extract_traits_from_message(message: str) -> Dict[str, str]:
         traits["shedding"] = "hypoallergenic"
     else:
         low_shed_patterns = [
-            "low-shedding",
-            "low shedding",
-            "doesn't shed much",
-            "doesnt shed much",
-            "doesn't shed too much",
-            "doesnt shed too much",
-            "doesn't shed much hair",
-            "doesnt shed much hair",
-            "doesn't shed too much hair",
-            "doesnt shed too much hair",
-            "not shed much hair",
-            "not shed too much hair",
-            "don't shed much hair",
-            "dont shed much hair",
-            "don't shed too much hair",
-            "dont shed too much hair",
-            "little shedding",
-            "minimal shedding",
-            "hardly sheds",
-            "barely sheds",
+            "low-shedding", "low shedding", "doesn't shed much", "doesnt shed much",
+            "doesn't shed too much", "doesnt shed too much", "doesn't shed much hair",
+            "doesnt shed much hair", "doesn't shed too much hair", "doesnt shed too much hair",
+            "not shed much hair", "not shed too much hair", "don't shed much hair",
+            "dont shed much hair", "don't shed too much hair", "dont shed too much hair",
+            "little shedding", "minimal shedding", "hardly sheds", "barely sheds",
         ]
         if any(p in msg for p in low_shed_patterns):
             traits["shedding"] = "low-shedding"
@@ -70,13 +51,11 @@ def extract_traits_from_message(message: str) -> Dict[str, str]:
             traits["shedding"] = "shedding ok"
 
     # -------- CHILDREN --------
-    # Answer to the “good with kids?” question
-    if any(p in msg for p in ["yes", "yep", "yeah", "sure", "of course"]) and "no " not in msg:
+    if any(p in msg for p in ["yes", "yep", "yeah", "sure"]) and "no " not in msg:
         traits.setdefault("children", "yes")
     if any(p in msg for p in ["no", "nope", "not really"]) and "yes" not in msg:
         traits.setdefault("children", "no")
 
-    # Also infer children from words “kids / children” in a descriptive way
     if "kids" in msg or "children" in msg:
         if "no kids" in msg or "no children" in msg:
             traits["children"] = "no"
