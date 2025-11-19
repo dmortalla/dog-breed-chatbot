@@ -5,7 +5,7 @@ def extract_traits_from_message(message: str) -> Dict[str, str]:
     """
     Extract dog-related preference traits from a user message.
     """
-    # --- SAFETY FIX: force message into a lowercase string ---
+    # --- SAFETY FIX ---
     msg = str(message).lower().strip()
 
     traits: Dict[str, str] = {}
@@ -18,11 +18,12 @@ def extract_traits_from_message(message: str) -> Dict[str, str]:
     elif any(p in msg for p in ["high energy", "very active", "energetic", "hyper"]):
         traits["energy"] = "high"
     else:
-        if "low energy" in msg or ("low" in msg and "shed" not in msg):
+        # Minimal fix — prevent "high" inside unrelated words (like "hair") from triggering energy
+        if " low " in f" {msg} ":
             traits.setdefault("energy", "low")
-        if "medium energy" in msg or "medium" in msg:
+        if " medium " in f" {msg} ":
             traits.setdefault("energy", "medium")
-        if "high energy" in msg or "high" in msg:
+        if " high " in f" {msg} " and "hair" not in msg:
             traits.setdefault("energy", "high")
 
     # -------- LIVING SPACE --------
@@ -51,16 +52,16 @@ def extract_traits_from_message(message: str) -> Dict[str, str]:
             traits["shedding"] = "shedding ok"
 
     # -------- CHILDREN --------
-    if any(p in msg for p in ["yes", "yep", "yeah", "sure"]) and "no " not in msg:
-        traits.setdefault("children", "yes")
-    if any(p in msg for p in ["no", "nope", "not really"]) and "yes" not in msg:
-        traits.setdefault("children", "no")
-
+    # Minimal Fix — ONLY trigger yes/no if user explicitly refers to children
     if "kids" in msg or "children" in msg:
-        if "no kids" in msg or "no children" in msg:
+        if "no kids" in msg or "no children" in msg or "not good with kids" in msg:
             traits["children"] = "no"
         elif "good with kids" in msg or "good with children" in msg:
             traits["children"] = "yes"
+        elif "yes" in msg:
+            traits["children"] = "yes"
+        elif "no" in msg:
+            traits["children"] = "no"
 
     return traits
 
@@ -68,37 +69,31 @@ def extract_traits_from_message(message: str) -> Dict[str, str]:
 def merge_traits(existing: Dict[str, str], new: Dict[str, str]) -> Dict[str, str]:
     """
     Merge new traits into existing traits.
-
-    If a trait already exists and the new value is non-empty, overwrite with the new value.
+    Only overwrite if value changes.
     """
     merged = existing.copy()
     for key, value in new.items():
-        if value is not None and value != "":
+        if value and merged.get(key) != value:
             merged[key] = value
     return merged
 
 
 def classify_off_topic(message) -> bool:
     """
-    Return True only if the message is genuinely off-topic.
-
-    A message is considered ON-TOPIC if:
-      - It mentions dogs, breeds, lifestyle, or traits we care about, or
-      - It is a simple confirmation like 'yes', 'no', 'sure', etc.
+    Return True only if the message is clearly irrelevant.
+    MINIMAL FIX: Allow single-trait answers like 'low', 'medium', 'yes please'.
     """
-    # Be robust to non-string inputs (e.g., mic recorder objects)
     try:
         msg = str(message).lower().strip()
     except Exception:
-        return False  # treat as on-topic rather than crashing
-
-    confirmations = [
-        "yes", "yep", "yeah", "sure", "ok", "okay",
-        "sounds good", "fine", "correct", "that's right"
-    ]
-    if msg in confirmations:
         return False
 
+    # 1. Accept simple answers
+    trait_answers = ["low", "medium", "high", "yes", "no", "ok", "fine", "sure"]
+    if msg in trait_answers:
+        return False
+
+    # 2. Accept answers mentioning any dog trait keywords
     dog_keywords = [
         "dog", "puppy", "breed", "shedding", "hair", "fur",
         "energy", "calm", "quiet", "active",
@@ -109,6 +104,7 @@ def classify_off_topic(message) -> bool:
     if any(k in msg for k in dog_keywords):
         return False
 
+    # 3. True off-topic keywords
     unrelated = [
         "bitcoin", "crypto", "stock", "stocks", "recipe",
         "politics", "election", "war", "galaxy", "universe",
@@ -117,4 +113,5 @@ def classify_off_topic(message) -> bool:
     if any(w in msg for w in unrelated):
         return True
 
+    # Default: treat as on-topic to avoid false negatives
     return False
