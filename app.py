@@ -21,7 +21,7 @@ from recommender_engine import recommend_breeds
 st.set_page_config(
     page_title="Dog Lover Chatbot",
     page_icon="🐶",
-    layout="centered"
+    layout="wide"
 )
 
 
@@ -39,37 +39,19 @@ dog_breeds, trait_descriptions = load_data()
 
 
 # ============================================================
-# SIDEBAR
+# SIDEBAR (NO THEME TOGGLE ANYMORE)
 # ============================================================
 
 with st.sidebar:
     st.header("⚙️ Settings")
 
-    reset = st.button("🔄 Reset Conversation")
-    if reset:
+    if st.button("🔄 Reset Conversation"):
         st.session_state.messages = []
         init_memory()
         st.experimental_rerun()
 
     st.markdown("### 🧠 Your Preferences")
     st.info(memory_summary())
-
-    st.markdown("---")
-    st.markdown("### 🌗 Theme")
-    theme_choice = st.radio("Choose theme:", ["Light", "Dark"], index=0)
-    if theme_choice == "Dark":
-        st.markdown(
-            """
-            <style>
-            body, .stApp { 
-                background-color: #1a1a1a !important;
-                color: #f2f2f2 !important;
-            }
-            .stChatMessage, .stMarkdown { color: #f2f2f2 !important; }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
 
     st.markdown("---")
     render_chat_history()
@@ -96,8 +78,7 @@ if len(st.session_state.messages) == 0:
 
 def process_message(user_msg: str):
     """Main message-processing pipeline."""
-
-    # If message is off-topic → gently redirect
+    # Off-topic check
     if classify_off_topic(user_msg):
         reply = (
             "😅 I’m sorry, but that’s outside what I can help with.\n\n"
@@ -107,14 +88,14 @@ def process_message(user_msg: str):
         st.chat_message("assistant").markdown(reply)
         return
 
-    # Extract traits
+    # Extract traits from message
     new_traits = extract_traits(user_msg)
 
-    # Update memory ONLY for traits the user mentioned
+    # Update memory only for traits explicitly mentioned
     for key, value in new_traits.items():
         update_memory(key, value)
 
-    # If no new traits were detected → ask for clarification
+    # If nothing was extracted, gently guide the user
     if not new_traits:
         reply = (
             "Thanks! Could you tell me a bit more about your lifestyle "
@@ -129,7 +110,7 @@ def process_message(user_msg: str):
         st.chat_message("assistant").markdown(reply)
         return
 
-    # If all major traits are collected → offer summary + recommendations
+    # Check if we have enough info to recommend
     mem = st.session_state.memory
     ready = all([
         mem.get("energy"),
@@ -148,7 +129,7 @@ def process_message(user_msg: str):
         add_assistant_msg(summary)
         st.chat_message("assistant").markdown(summary)
 
-        # Now recommend
+        # Recommend breeds using current memory + dog_breeds dataframe
         recs = recommend_breeds(
             dog_breeds,
             mem.get("energy"),
@@ -168,13 +149,12 @@ def process_message(user_msg: str):
         add_assistant_msg(msg)
         st.chat_message("assistant").markdown(msg)
 
-        # Show list (no images here — images handled by recommender_engine)
         for breed in recs:
             st.chat_message("assistant").markdown(f"• **{breed}**")
 
         return
 
-    # If some traits still missing → keep chatting
+    # If we're not ready yet, keep the conversation going
     reply = "Great! Tell me more about your preferences 😊"
     add_assistant_msg(reply)
     st.chat_message("assistant").markdown(reply)
@@ -190,4 +170,3 @@ if user_msg:
     add_user_msg(user_msg)
     st.chat_message("user").markdown(user_msg)
     process_message(user_msg)
-
