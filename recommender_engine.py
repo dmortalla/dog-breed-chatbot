@@ -1,205 +1,303 @@
 """
-Recommendation and image helper functions for the Dog Breed Chatbot.
+Recommender engine for the Dog Breed Chatbot (serverless version).
 
 This module:
-- Cleans numeric trait columns from the breed_traits dataset.
-- Computes a match score between a user preference profile and each breed.
-- Converts breed names into folder names for the GitHub image dataset.
-- Builds image URLs and folder URLs for displaying photos in the app.
+
+- Fetches the list of breed folders from the GitHub Dog-Breeds-Dataset
+  repository using the GitHub REST API.
+- Loads the dog breed traits table from data/breed_traits.csv.
+- Ensures that only breeds with image folders are ever recommended.
+- Scores breeds against a user preference profile (1–5 scale traits).
+- Builds image URLs (using 1.jpg) and folder URLs for each breed.
 """
 
-from typing import Dict
+from __future__ import annotations
 
+import json
+import urllib.request
+from functools import lru_cache
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 import pandas as pd
-import unicodedata
-import re
-
-# -------------------------------------------------------------------
-# Numeric traits present in data/breed_traits.csv
-# -------------------------------------------------------------------
-
-NUMERIC_TRAITS = [
-    "Affectionate With Family",
-    "Good With Young Children",
-    "Good With Other Dogs",
-    "Shedding Level",
-    "Coat Grooming Frequency",
-    "Drooling Level",
-    "Openness To Strangers",
-    "Playfulness Level",
-    "Watchdog/Protective Nature",
-    "Adaptability Level",
-    "Trainability Level",
-    "Energy Level",
-    "Barking Level",
-    "Mental Stimulation Needs",
-]
 
 
 # -------------------------------------------------------------------
-# Data cleaning
+# GitHub config
 # -------------------------------------------------------------------
+GITHUB_USER = "maartenvandenbroeck"
+GITHUB_REPO = "Dog-Breeds-Dataset"
+BRANCH = "master"
 
-def clean_breed_traits(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean mixed numeric trait columns and return a new DataFrame.
+RAW_BASE = (
+    f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{BRANCH}"
+)
+WEB_BASE = (
+    f"https://github.com/{GITHUB_USER}/{GITHUB_REPO}/tree/{BRANCH}"
+)
 
-    The original CSV stores many traits as strings like "5 - Very High".
-    This function extracts just the leading digit and converts it to a
-    numeric value (float).
+GITHUB_CONTENTS_API = (
+    f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/contents?ref={BRANCH}"
+)
 
-    Args:
-        df: Raw dog_breeds DataFrame loaded from CSV.
+
+# -------------------------------------------------------------------
+# Fetch breed folders directly from GitHub (serverless)
+# -------------------------------------------------------------------
+@lru_cache(maxsize=1)
+def fetch_breed_folders_from_github() -> List[str]:
+    """Fetch folder names from the Dog-Breeds-Dataset repo using GitHub API.
+
+    This uses the public API and is cached in memory using lru_cache so it
+    is called at most once per process.
 
     Returns:
-        A copy of the DataFrame with numeric trait columns converted to
-        floats where possible.
+        List of folder names like:
+        ["affenpinscher dog", "afghan hound dog", "cirneco dell'etna dog", ...]
     """
-    df_clean = df.copy()
+    try:
+        with urllib.request.urlopen(GITHUB_CONTENTS_API, timeout=30) as resp:
+            data = resp.read().decode("utf-8")
+        items = json.loads(data)
+    except Exception as exc:  # noqa: BLE001
+        # If something goes wrong, return an empty list.
+        print(f"Warning: could not fetch breed folders from GitHub: {exc}")
+        return []
 
-    for col in NUMERIC_TRAITS:
-        if col in df_clean.columns:
-            # Extract the first digit (e.g. "5 - Very High" -> "5")
-            extracted = df_clean[col].astype(str).str.extract(r"(\d)", expand=False)
-            df_clean[col] = pd.to_numeric(extracted, errors="coerce")
+    folders: List[str] = [
+        item["name"]
+        for item in items
+        if isinstance(item, dict) and item.get("type") == "dir"
+    ]
+    return folders
 
-    return df_clean
+
+# Cached list of supported folders
+SUPPORTED_FOLDERS: List[str] = fetch_breed_folders_from_github()
 
 
 # -------------------------------------------------------------------
-# Match scoring
+# Load traits
 # -------------------------------------------------------------------
-
-def compute_match_scores(
-    numeric_df: pd.DataFrame, user_profile: Dict[str, int]
-) -> pd.DataFrame:
-    """Compute a similarity score (0–100) between user profile and each breed.
-
-    The score is based on the summed absolute distance across all trait
-    sliders the user controls. The smaller the distance, the higher the
-    score.
+def load_breed_traits(path: str = "data/breed_traits.csv") -> pd.DataFrame:
+    """Load breed traits and ensure numeric columns are numeric.
 
     Args:
-        numeric_df: Cleaned DataFrame with numeric trait columns.
-        user_profile: Dictionary mapping trait name to value (1–5).
+        path: Path to the breed traits CSV file.
 
     Returns:
-        DataFrame sorted by descending score, with extra columns:
-        - distance: total absolute difference across all traits.
-        - score: similarity score scaled 0–100.
+        DataFrame with a 'Breed' column and trait columns on 1–5 scales.
     """
-    traits = list(user_profile.keys())
+    df = pd.read_csv(path)
 
-    # Drop breeds that have missing values for any selected trait
-    df = numeric_df.dropna(subset=traits).copy()
+    numeric_cols = [
+        "Affectionate With Family",
+        "Good With Young Children",
+        "Good With Other Dogs",
+        "Shedding Level",
+        "Coat Grooming Frequency",
+        "Drooling Level",
+        "Openness To Strangers",
+        "Playfulness Level",
+        "Watchdog/Protective Nature",
+        "Adaptability Level",
+        "Trainability Level",
+        "Energy Level",
+        "Barking Level",
+        "Mental Stimulation Needs",
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    max_diff = 4 * len(traits)  # max distance per trait is |5-1| = 4
-
-    def total_diff(row) -> float:
-        return sum(abs(float(row[t]) - float(user_profile[t])) for t in traits)
-
-    df["distance"] = df.apply(total_diff, axis=1)
-    df["score"] = (1.0 - df["distance"] / max_diff) * 100.0
-    df["score"] = df["score"].clip(lower=0.0, upper=100.0)
-
-    return df.sort_values(by="score", ascending=False)
+    return df
 
 
 # -------------------------------------------------------------------
-# Folder name helpers for the GitHub dataset
+# Folder mapping helpers
 # -------------------------------------------------------------------
+def folder_for_breed(breed: str) -> Optional[str]:
+    """Map a breed name from CSV to an image folder name.
 
-def _strip_accents(text: str) -> str:
-    """Remove accents and keep only basic ASCII characters."""
-    normalized = unicodedata.normalize("NFKD", text)
-    return "".join(c for c in normalized if ord(c) < 128)
+    Example:
+        "Anatolian Shepherd Dogs" -> "anatolian shepherd dog"
 
-
-def dataset_folder_for_breed(breed: str) -> str:
-    """Convert a breed name into the GitHub dataset folder name.
-
-    The dataset folders look like:
-    - "akita dog"
-    - "alaskan malamute dog"
-    - "cirneco dell'etna dog"
-
-    We approximate this by:
-    - Stripping accents.
-    - Lowercasing.
-    - Removing most punctuation except spaces and hyphens.
-    - Normalizing whitespace.
-    - Ensuring the name ends with the word "dog".
+    This function also checks that the folder is present in SUPPORTED_FOLDERS.
+    If not, it returns None.
 
     Args:
-        breed: Breed name from the CSV (e.g., "Rhodesian Ridgebacks").
+        breed: Breed name from the traits table.
 
     Returns:
-        Folder name used in the GitHub dataset (e.g. "rhodesian ridgeback dog").
+        Matching folder name or None.
     """
-    if not breed:
-        return ""
+    if not isinstance(breed, str):
+        return None
 
-    name = _strip_accents(breed)
-    name = name.lower()
+    name = breed.strip().lower()
 
-    # Keep letters, digits, spaces, and hyphens; drop other punctuation.
-    name = re.sub(r"[^\w\s\-]", "", name)
-
-    # Collapse multiple spaces
-    name = re.sub(r"\s+", " ", name).strip()
-
-    # Rough plural handling: remove trailing 's' for many breed names
-    # (e.g., "ridgebacks" -> "ridgeback").
-    if not name.endswith(" dog") and name.endswith("s"):
+    # Normalize plurals:
+    #   "... dogs" -> "... dog"
+    #   "... dog"  -> "... dog"
+    if name.endswith(" dogs"):
         name = name[:-1]
+    elif name.endswith(" dog"):
+        pass
+    else:
+        # Many folders use the "dog" suffix, so we try that.
+        name = name + " dog"
 
-    # Ensure it ends with "dog"
-    if not name.endswith("dog"):
-        if not name.endswith(" "):
-            name = name + " "
-        name = name + "dog"
+    if name in SUPPORTED_FOLDERS:
+        return name
 
-    return name
+    # Fallback: sometimes the CSV may already match folder naming
+    if breed.strip().lower() in SUPPORTED_FOLDERS:
+        return breed.strip().lower()
+
+    return None
+
+
+def image_url_for_breed(breed: str) -> Optional[str]:
+    """Return a raw GitHub URL for 1.jpg in this breed's folder.
+
+    Args:
+        breed: Breed name.
+
+    Returns:
+        URL string or None if no folder exists.
+    """
+    folder = folder_for_breed(breed)
+    if folder is None:
+        return None
+
+    # The folder name may contain spaces or special characters,
+    # so we URL-encode it.
+    from urllib.parse import quote
+
+    encoded_folder = quote(folder, safe="")
+    return f"{RAW_BASE}/{encoded_folder}/1.jpg"
+
+
+def folder_url_for_breed(breed: str) -> Optional[str]:
+    """Return the GitHub web URL for this breed's image folder."""
+    folder = folder_for_breed(breed)
+    if folder is None:
+        return None
+
+    from urllib.parse import quote
+
+    encoded_folder = quote(folder, safe="")
+    return f"{WEB_BASE}/{encoded_folder}"
 
 
 # -------------------------------------------------------------------
-# Image + folder URLs
+# Scoring logic
 # -------------------------------------------------------------------
-
-def get_breed_image_url(breed: str) -> str:
-    """Return a URL to one sample image for the given breed.
-
-    We do not know the exact image file naming convention, but most
-    large image datasets contain files like "1.jpg", "2.jpg", etc.
-    Here we simply point to "1.jpg" in the folder. If that file does
-    not exist, the image will fail gracefully in Streamlit.
-
-    Args:
-        breed: Breed name from the CSV.
-
-    Returns:
-        Raw GitHub URL that Streamlit can use in st.image.
-    """
-    base = (
-        "https://raw.githubusercontent.com/"
-        "maartenvandenbroeck/Dog-Breeds-Dataset/master"
-    )
-    folder = dataset_folder_for_breed(breed)
-    return f"{base}/{folder}/1.jpg"
+PREFERENCE_TRAITS = {
+    "Energy Level": "Energy Level",
+    "Good With Young Children": "Good With Young Children",
+    "Shedding Level": "Shedding Level",
+    "Barking Level": "Barking Level",
+    "Trainability Level": "Trainability Level",
+    "Affectionate With Family": "Affectionate With Family",
+}
 
 
-def build_image_url(breed: str) -> str:
-    """Return a GitHub folder URL for 'View more photos' links.
+def score_breeds(
+    dog_breeds: pd.DataFrame,
+    prefs: Dict[str, int],
+    weights: Dict[str, float],
+) -> pd.DataFrame:
+    """Score only breeds that have image folders.
 
     Args:
-        breed: Breed name from the CSV.
+        dog_breeds: Full traits DataFrame.
+        prefs: Mapping trait -> desired level (1–5).
+        weights: Mapping trait -> importance weight.
 
     Returns:
-        GitHub tree URL pointing to that breed's folder.
+        DataFrame sorted by score (descending), with columns:
+        ['Breed', 'score', 'details'] where 'details' is a dict of per-trait info.
     """
-    folder = dataset_folder_for_breed(breed)
-    return (
-        "https://github.com/maartenvandenbroeck/"
-        f"Dog-Breeds-Dataset/tree/master/{folder}"
-    )
+    # Keep only breeds with a folder in the GitHub dataset
+    mask = dog_breeds["Breed"].apply(lambda b: folder_for_breed(b) is not None)
+    df = dog_breeds[mask].copy().reset_index(drop=True)
+
+    total_weight = sum(weights.values()) or 1.0
+
+    scores: List[float] = []
+    details_list: List[Dict[str, Dict[str, float]]] = []
+
+    for _, row in df.iterrows():
+        breed_score = 0.0
+        details: Dict[str, Dict[str, float]] = {}
+
+        for trait_label, col_name in PREFERENCE_TRAITS.items():
+            desired = prefs.get(trait_label)
+            weight = weights.get(trait_label, 0.0)
+            actual = row.get(col_name, np.nan)
+
+            if desired is None or np.isnan(actual):
+                diff = 2.0  # neutral gap
+            else:
+                diff = abs(float(actual) - float(desired))
+
+            # Max difference on a 1–5 scale is 4 → convert to 0–1 match.
+            match = max(0.0, 1.0 - diff / 4.0)
+            weighted = match * weight
+            breed_score += weighted
+
+            details[trait_label] = {
+                "desired": desired,
+                "actual": float(actual) if not np.isnan(actual) else None,
+                "match": match,
+                "weight": weight,
+            }
+
+        score_pct = (breed_score / total_weight) * 100.0
+        scores.append(score_pct)
+        details_list.append(details)
+
+    df["score"] = scores
+    df["details"] = details_list
+
+    return df[["Breed", "score", "details"]].sort_values(
+        by="score", ascending=False
+    ).reset_index(drop=True)
 
 
+def explain_match(details: Dict[str, Dict[str, float]]) -> List[str]:
+    """Create human-readable bullet points from per-trait details."""
+    lines: List[str] = []
+
+    for trait, info in details.items():
+        desired = info["desired"]
+        actual = info["actual"]
+        match = info["match"]
+
+        if actual is None:
+            lines.append(f"- No data available for **{trait}**.")
+            continue
+
+        if match > 0.8:
+            lines.append(
+                f"- Excellent match on **{trait.lower()}** "
+                f"(you prefer {desired}, this breed is about {int(round(actual))})."
+            )
+        elif match > 0.6:
+            lines.append(
+                f"- Good match on **{trait.lower()}** "
+                f"(you prefer {desired}, this breed is about {int(round(actual))})."
+            )
+        elif match > 0.4:
+            lines.append(
+                f"- Moderate match on **{trait.lower()}** "
+                f"(you prefer {desired}, this breed is {int(round(actual))})."
+            )
+        else:
+            lines.append(
+                f"- Weaker match on **{trait.lower()}** "
+                f"(you prefer {desired}, this breed is {int(round(actual))})."
+            )
+
+    return lines
