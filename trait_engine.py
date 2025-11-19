@@ -10,17 +10,44 @@ def _extract_energy(text: str) -> Optional[int]:
     """Return 1 (low), 3 (medium), or 5 (high) based on natural language."""
     t = text.lower()
 
-    low_words = ["low energy", "very low", "calm", "chill", "relaxed", "quiet dog", "couch"]
+    low_words = [
+        "low energy",
+        "very low",
+        "calm",
+        "chill",
+        "relaxed",
+        "quiet dog",
+        "quiet and calm",
+        "not very active",
+        "doesn't make too much noise",
+        "doesnt make too much noise",
+        "not make too much noise",
+        "couch potato",
+    ]
     if any(w in t for w in low_words):
         return 1
-    if "low" in t and "low shedding" not in t:
+    # Simple "low" but not in "low shedding"
+    if "low" in t and "low shedding" not in t and "low-shedding" not in t:
         return 1
 
-    med_words = ["medium", "moderate", "in the middle", "not too active", "balanced energy"]
+    med_words = [
+        "medium energy",
+        "moderate energy",
+        "in the middle",
+        "not too active",
+        "balanced energy",
+    ]
     if any(w in t for w in med_words):
         return 3
 
-    high_words = ["high energy", "very active", "hyper", "energetic", "sporty", "runner"]
+    high_words = [
+        "high energy",
+        "very active",
+        "hyper",
+        "energetic",
+        "sporty",
+        "runner",
+    ]
     if any(w in t for w in high_words):
         return 5
     if "high" in t:
@@ -54,16 +81,45 @@ def _extract_allergies(text: str) -> Optional[int]:
     """Return 1 = hypoallergenic, 2 = low shedding, 4 = shedding ok."""
     t = text.lower()
 
+    # Hypoallergenic / allergy-focused
     if "hypoallergenic" in t:
         return 1
 
-    low_shed_words = ["low-shedding", "low shedding", "minimal shedding", "doesn't shed much"]
-    if any(w in t for w in low_shed_words):
-        return 2
-
     if "allergy" in t or "allergies" in t or "asthma" in t:
+        # If allergies are mentioned at all, assume they care about shedding
         return 2
 
+    # Broad set of "low shedding" phrases
+    low_shed_patterns = [
+        "low-shedding",
+        "low shedding",
+        "little shedding",
+        "minimal shedding",
+        "hardly sheds",
+        "barely sheds",
+        "doesn't shed much",
+        "doesnt shed much",
+        "doesn't shed too much",
+        "doesnt shed too much",
+        "doesn't shed much hair",
+        "doesnt shed much hair",
+        "doesn't shed too much hair",
+        "doesnt shed too much hair",
+        "not shed much hair",
+        "not shed too much hair",
+        "don't shed much hair",
+        "dont shed much hair",
+        "don't shed too much hair",
+        "dont shed too much hair",
+        "shed much hair",          # often used with a negation in the sentence
+        "shed too much hair",
+        "shed much fur",
+        "shed too much fur",
+    ]
+    if any(p in t for p in low_shed_patterns):
+        return 2
+
+    # Explicitly relaxed about shedding
     if "i don't mind shedding" in t or "shedding is fine" in t:
         return 4
 
