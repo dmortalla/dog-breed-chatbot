@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import random
-import time
 from typing import Dict, List, Tuple
 from urllib.parse import quote
 
 import streamlit as st
 
-# Import your recommender engine exactly as your repo defines it
 from recommender_engine import (
-    extract_preferences,
     score_breeds,
     top_n_breeds,
     image_url_for_breed,
     folder_for_breed,
+)
+
+from trait_engine import (
+    parse_preferences,
+    classify_off_topic,
+    summarize_preferences,
 )
 
 # Optional voice input
@@ -59,59 +62,6 @@ def dog_fact() -> str:
     return random.choice(facts)
 
 
-def is_off_topic(text: str) -> bool:
-    """Detect messages that don’t relate to dog-matching."""
-    keywords = [
-        "energy", "active", "calm",
-        "apartment", "yard", "house",
-        "kids", "children", "family",
-        "allergy", "hypoallergenic", "shedding",
-        "train", "bark", "quiet",
-    ]
-    t = text.lower()
-    return not any(k in t for k in keywords)
-
-
-def summarize_preferences(prefs: Dict[str, int]) -> str:
-    """Short English summary of what Dog Lover knows so far."""
-    if not prefs:
-        return "No preferences detected yet. Tell me about your home, allergies, kids, or energy level."
-
-    parts = []
-
-    # ENERGY
-    if "energy" in prefs:
-        if prefs["energy"] <= 2:
-            parts.append("You prefer a calmer, low-energy dog.")
-        elif prefs["energy"] == 3:
-            parts.append("You’re okay with a medium-energy dog.")
-        else:
-            parts.append("You prefer a high-energy, active dog.")
-
-    # HOME
-    if "home" in prefs:
-        if prefs["home"] <= 2:
-            parts.append("You live in an apartment.")
-        else:
-            parts.append("You seem to have more space at home.")
-
-    # ALLERGIES
-    if "allergies" in prefs:
-        if prefs["allergies"] <= 2:
-            parts.append("Low-shedding or hypoallergenic coats matter to you.")
-        else:
-            parts.append("You’re flexible about shedding.")
-
-    # KIDS
-    if "kids" in prefs:
-        if prefs["kids"] >= 4:
-            parts.append("Being good with children is important.")
-        else:
-            parts.append("Kid-friendliness is less critical.")
-
-    return " ".join(parts)
-
-
 def render_breed_card(breed: str, score: float) -> None:
     """Display one breed recommendation with image and link."""
     st.markdown(f"### 🐕 {breed} — Match score: {score:.1f}/100")
@@ -139,7 +89,6 @@ st.set_page_config(
     layout="centered",
 )
 
-
 # ============================================================
 # Session state storage
 # ============================================================
@@ -151,9 +100,8 @@ state.setdefault("step", 0)
 state.setdefault("theme", "light")
 state.setdefault("results", None)
 
-
 # ============================================================
-# Sidebar UI: Theme, Voice Input, Memory, Reset
+# Sidebar UI: Theme, Voice Input, Memory, Reset, History
 # ============================================================
 
 with st.sidebar:
@@ -197,7 +145,7 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Memory summary
+    # Memory summary (now using trait_engine)
     st.subheader("🧠 What I Know So Far")
     st.write(summarize_preferences(state.preferences))
 
@@ -215,7 +163,6 @@ with st.sidebar:
 
 # Apply theme AFTER reading sidebar state
 apply_theme(state.theme)
-
 
 # ============================================================
 # Main Chat UI
@@ -238,36 +185,32 @@ for msg in state.messages:
     with st.chat_message("assistant" if msg["role"] == "assistant" else "user"):
         st.markdown(msg["content"])
 
-
 # Chat input box
 user_message = st.chat_input("Describe your lifestyle or dream dog…")
 
-
 # ============================================================
-# Chatbot Logic
+# Chatbot Logic using trait_engine
 # ============================================================
 
 if user_message:
     state.messages.append({"role": "user", "content": user_message})
 
-    # Off-topic message (but only after step 0)
-    if is_off_topic(user_message) and state.step > 0:
+    # First, parse preferences from this message
+    step = state.step
+    new_prefs = parse_preferences(user_message)
+    # Decide if it's off-topic (step-aware)
+    if classify_off_topic(user_message, step, new_prefs):
         reply = (
             "I’m sorry, but that’s a bit outside what I can help with. "
-            "Let’s get back to finding you the perfect dog! 🐾"
+            "Let’s get back to how I can help you pick the best dog for you. 🐾"
         )
         state.messages.append({"role": "assistant", "content": reply})
         st.rerun()
 
-    # Extract preferences
-    new_prefs = extract_preferences(user_message)
-    state.preferences.update({k: v for k, v in new_prefs.items() if v is not None})
+    # Merge new prefs into global preferences
+    state.preferences.update(new_prefs)
 
-    step = state.step
-
-    # ===========================
-    # Step 0 → Ask about energy
-    # ===========================
+    # Conversation flow
     if step == 0:
         reply = (
             "Awesome! Let’s start with **energy level**.\n\n"
@@ -277,9 +220,6 @@ if user_message:
         state.step = 1
         st.rerun()
 
-    # ===========================
-    # Step 1 → Ask about home size
-    # ===========================
     elif step == 1:
         reply = (
             "Great! Now let’s consider your **living situation**.\n\n"
@@ -290,9 +230,6 @@ if user_message:
         state.step = 2
         st.rerun()
 
-    # ===========================
-    # Step 2 → Ask about allergies
-    # ===========================
     elif step == 2:
         reply = (
             "Let’s now consider the issue of **allergies**.\n\n"
@@ -302,9 +239,6 @@ if user_message:
         state.step = 3
         st.rerun()
 
-    # ===========================
-    # Step 3 → Ask about kids
-    # ===========================
     elif step == 3:
         reply = (
             "The presence of **children** could be a factor.\n\n"
@@ -314,10 +248,8 @@ if user_message:
         state.step = 4
         st.rerun()
 
-    # ===========================
-    # Step 4+ → Evaluate preferences
-    # ===========================
     else:
+        # Final step(s): if enough info, score breeds
         if len(state.preferences) >= 4:
             scores = score_breeds(state.preferences)
             state.results = top_n_breeds(scores, n=3)
@@ -329,13 +261,12 @@ if user_message:
             state.messages.append({"role": "assistant", "content": reply})
         else:
             reply = (
-                "I’m getting close! Tell me a bit more about your activity level, home, "
+                "I’m getting closer! Tell me a bit more about your activity level, home, "
                 "allergies, or whether you have kids, and I’ll refine the match."
             )
             state.messages.append({"role": "assistant", "content": reply})
 
         st.rerun()
-
 
 # ============================================================
 # Show final recommendations
