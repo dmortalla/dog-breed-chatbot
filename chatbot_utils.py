@@ -60,12 +60,11 @@ def init_memory():
             "allergies": None,
             "children": None,
             "size": None,
-            "notes": [],
         }
 
 
 def update_memory(key: str, value):
-    """Update memory only when a new trait is detected."""
+    """Update one memory field if user answers."""
     init_memory()
     if value:
         st.session_state.memory[key] = value
@@ -88,9 +87,6 @@ def memory_summary():
     if m.get("size"):
         summary_parts.append(f"Preferred dog size: {m['size']}")
 
-    if m.get("notes"):
-        summary_parts.extend(m["notes"])
-
     if not summary_parts:
         return "I haven't collected any preferences yet."
 
@@ -98,11 +94,10 @@ def memory_summary():
 
 
 # ============================================================
-# PARSING HELPERS (keyword-based)
+# PARSING HELPERS
 # ============================================================
 
-def parse_energy(message: str):
-    msg = message.lower()
+def parse_energy(msg: str):
     if "low" in msg:
         return "low"
     if "medium" in msg:
@@ -112,37 +107,33 @@ def parse_energy(message: str):
     return None
 
 
-def parse_living(message: str):
-    msg = message.lower()
+def parse_living(msg: str):
     if "small" in msg:
         return "small apartment"
     if "apartment" in msg:
         return "standard apartment"
     if "yard" in msg:
-        return "house with yard"
+        return "house with a yard"
     return None
 
 
-def parse_allergies(message: str):
-    msg = message.lower()
+def parse_allergies(msg: str):
     if "hypo" in msg:
         return "hypoallergenic"
-    if "shed" in msg or "low-shed" in msg or "low shed" in msg:
+    if "low-shed" in msg or "low shed" in msg or "shed" in msg:
         return "low-shedding"
     return None
 
 
-def parse_children(message: str):
-    msg = message.lower()
-    if any(x in msg for x in ["yes", "yep", "sure"]):
+def parse_children(msg: str):
+    if msg in ["yes", "yep", "yeah", "sure"]:
         return "yes"
     if "no" in msg:
         return "no"
     return None
 
 
-def parse_size(message: str):
-    msg = message.lower()
+def parse_size(msg: str):
     if "small dog" in msg or "small" in msg:
         return "small"
     if "medium dog" in msg or "medium" in msg:
@@ -152,45 +143,43 @@ def parse_size(message: str):
     return None
 
 
-# ============================================================
-# TRAIT EXTRACTION (fixed so it won't erase memory)
-# ============================================================
-
 def extract_traits(message: str):
     """
-    Extract only traits that were mentioned.
-    Return a dict containing ONLY keys that have values.
+    Return ONLY the traits detected from the message.
+    Does NOT return None values (prevents overwriting memory).
     """
-    energy = parse_energy(message)
-    living = parse_living(message)
-    allergies = parse_allergies(message)
-    children = parse_children(message)
-    size = parse_size(message)
+    msg = message.lower().strip()
 
     traits = {}
 
-    if energy:
-        traits["energy"] = energy
-    if living:
-        traits["living"] = living
-    if allergies:
-        traits["allergies"] = allergies
-    if children:
-        traits["children"] = children
-    if size:
-        traits["size"] = size
+    e = parse_energy(msg)
+    if e:
+        traits["energy"] = e
+
+    l = parse_living(msg)
+    if l:
+        traits["living"] = l
+
+    a = parse_allergies(msg)
+    if a:
+        traits["allergies"] = a
+
+    c = parse_children(msg)
+    if c:
+        traits["children"] = c
+
+    s = parse_size(msg)
+    if s:
+        traits["size"] = s
 
     return traits
 
 
 # ============================================================
-# TYPING EFFECT
+# TYPING ANIMATION
 # ============================================================
 
 def typing_response(text: str, delay: float = 0.02):
-    """
-    Simulate a typing animation for assistant messages.
-    """
     placeholder = st.empty()
     typed = ""
 
@@ -203,25 +192,30 @@ def typing_response(text: str, delay: float = 0.02):
 
 
 # ============================================================
-# OFF-TOPIC DETECTION
+# OFF-TOPIC CLASSIFICATION
 # ============================================================
 
 NON_DOG_KEYWORDS = [
-    "bitcoin", "crypto", "stocks", "cooking", "recipe", "weather",
-    "politics", "election", "war", "galaxy", "math", "code", "programming"
+    "bitcoin", "crypto", "stocks", "cooking", "recipe",
+    "weather", "politics", "election", "war", "galaxy",
+    "math", "code", "programming"
 ]
 
 def classify_off_topic(message: str):
     """Return True if message is unrelated to dogs or lifestyle."""
-    msg = message.lower()
+    msg = message.lower().strip()
 
-    if any(word in msg for word in ["dog", "pup", "breed", "shedding", "children", "yard", "apartment", "energy"]):
+    if any(dog in msg for dog in [
+        "dog", "pup", "breed", "shedding", "children", "kids",
+        "yard", "apartment", "energy", "hypo", "shed"
+    ]):
         return False
 
     if any(word in msg for word in NON_DOG_KEYWORDS):
         return True
 
-    if msg.strip() in ["yes", "no", "sure", "ok", "okay", "yep", "yeah", "fine"]:
+    # simple replies are OK
+    if msg in ["yes", "no", "sure", "ok", "okay", "yep", "yeah"]:
         return False
 
     return False
