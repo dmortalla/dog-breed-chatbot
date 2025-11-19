@@ -1,30 +1,25 @@
 from __future__ import annotations
-
 from typing import Dict, Optional
 
 
 # ============================================================
-# Low-level trait extractors
+# LOW-LEVEL TRAIT EXTRACTORS
 # ============================================================
 
 def _extract_energy(text: str) -> Optional[int]:
     """Return 1 (low), 3 (medium), or 5 (high) based on natural language."""
     t = text.lower()
 
-    # Low energy
-    low_words = ["low energy", "very low", "calm", "chill", "relaxed", "couch", "quiet dog"]
+    low_words = ["low energy", "very low", "calm", "chill", "relaxed", "quiet dog", "couch"]
     if any(w in t for w in low_words):
         return 1
     if "low" in t and "low shedding" not in t:
-        # avoid confusion with low-shedding
         return 1
 
-    # Medium energy
     med_words = ["medium", "moderate", "in the middle", "not too active", "balanced energy"]
     if any(w in t for w in med_words):
         return 3
 
-    # High energy
     high_words = ["high energy", "very active", "hyper", "energetic", "sporty", "runner"]
     if any(w in t for w in high_words):
         return 5
@@ -35,9 +30,7 @@ def _extract_energy(text: str) -> Optional[int]:
 
 
 def _extract_home(text: str) -> Optional[int]:
-    """
-    Return 1–2 for smaller spaces (apartments), 5 for larger spaces (house/yard).
-    """
+    """Return 1–2 = apartment, 4–5 = house/yard."""
     t = text.lower()
 
     small_words = ["studio", "small apartment", "tiny apartment", "condo"]
@@ -50,6 +43,7 @@ def _extract_home(text: str) -> Optional[int]:
     big_words = ["yard", "garden", "big house", "house with a yard", "suburbs"]
     if any(w in t for w in big_words):
         return 5
+
     if "house" in t or "home" in t:
         return 4
 
@@ -57,21 +51,17 @@ def _extract_home(text: str) -> Optional[int]:
 
 
 def _extract_allergies(text: str) -> Optional[int]:
-    """
-    Lower values mean stronger allergy concern.
-    1 = hypoallergenic, 2 = low shedding, higher values = less concern.
-    """
+    """Return 1 = hypoallergenic, 2 = low shedding, 4 = shedding ok."""
     t = text.lower()
 
     if "hypoallergenic" in t:
         return 1
 
-    low_shed_words = ["low-shedding", "low shedding", "doesn't shed much", "minimal shedding"]
+    low_shed_words = ["low-shedding", "low shedding", "minimal shedding", "doesn't shed much"]
     if any(w in t for w in low_shed_words):
         return 2
 
-    if "allergies" in t or "allergy" in t or "asthma" in t:
-        # concerned but not specific
+    if "allergy" in t or "allergies" in t or "asthma" in t:
         return 2
 
     if "i don't mind shedding" in t or "shedding is fine" in t:
@@ -81,14 +71,12 @@ def _extract_allergies(text: str) -> Optional[int]:
 
 
 def _extract_kids(text: str) -> Optional[int]:
-    """
-    Return 5 if good-with-kids is important, 1 if not important, None if not mentioned.
-    """
+    """Return 5 if kid-friendly desired; 1 if explicitly not; None if not mentioned."""
     t = text.lower()
+
     if not any(w in t for w in ["kid", "kids", "child", "children", "baby", "toddler", "family"]):
         return None
 
-    # Positive
     yes_words = ["yes", "important", "must", "should", "need", "absolutely", "be good with"]
     if any(w in t for w in yes_words):
         return 5
@@ -97,144 +85,118 @@ def _extract_kids(text: str) -> Optional[int]:
     if any(w in t for w in no_words):
         return 1
 
-    # If kids mentioned but no polarity, assume important
     return 5
 
 
 # ============================================================
-# Public API: preference parsing
+# PUBLIC API — PARSE USER PREFERENCES
 # ============================================================
 
 def parse_preferences(text: str) -> Dict[str, int]:
-    """
-    Parse user text into structured preferences.
+    """Parse user text and return a dictionary of extracted traits."""
+    prefs = {}
 
-    Returns:
-        Dict with possible keys: "energy", "home", "allergies", "kids".
-        Values are ints compatible with the recommender.
-    """
-    prefs: Dict[str, int] = {}
+    e = _extract_energy(text)
+    if e is not None:
+        prefs["energy"] = e
 
-    energy = _extract_energy(text)
-    if energy is not None:
-        prefs["energy"] = energy
+    h = _extract_home(text)
+    if h is not None:
+        prefs["home"] = h
 
-    home = _extract_home(text)
-    if home is not None:
-        prefs["home"] = home
+    a = _extract_allergies(text)
+    if a is not None:
+        prefs["allergies"] = a
 
-    allergies = _extract_allergies(text)
-    if allergies is not None:
-        prefs["allergies"] = allergies
-
-    kids = _extract_kids(text)
-    if kids is not None:
-        prefs["kids"] = kids
+    k = _extract_kids(text)
+    if k is not None:
+        prefs["kids"] = k
 
     return prefs
 
 
 # ============================================================
-# Off-topic classifier
+# OFF-TOPIC CLASSIFICATION
 # ============================================================
 
 GENERAL_DOG_WORDS = [
-    "dog", "dogs", "breed", "breeds", "puppy", "puppies", "pet", "pets", "canine",
-    "walk", "leash", "bark", "coat", "fur",
+    "dog", "dogs", "breed", "breeds", "puppy", "puppies", "pet",
+    "canine", "walk", "leash", "bark", "coat", "fur"
 ]
 
+YES_NO = {
+    "yes", "yes.", "yes!", "yes please", "yes please.",
+    "yep", "yeah", "sure", "of course", "okay", "ok", "ok!",
+    "no", "no.", "no!", "no thanks", "no thank you",
+    "nope", "not really"
+}
 
-def classify_off_topic(
-    text: str,
-    step: int,
-    new_prefs: Dict[str, int],
-) -> bool:
-    """
-    Decide whether a user message is off-topic for the dog-matching use case.
 
-    Args:
-        text: Raw user message.
-        step: Conversation step (0 = intro, 1 = energy, 2 = home, 3 = allergies, 4 = kids, >=5 = recommend).
-        new_prefs: Preferences parsed from this single message.
+def classify_off_topic(text: str, step: int, new_prefs: Dict[str, int]) -> bool:
+    """Return True if irrelevant to dog-matching, False otherwise."""
+    t = text.lower().strip()
 
-    Returns:
-        True if the message is clearly off-topic, False otherwise.
-    """
-    t = text.lower()
-
-    # Intro step: accept almost anything
     if step == 0:
         return False
 
-    # If we detected any new preference, it's definitely on-topic
     if new_prefs:
         return False
 
-    # Step-specific hints even if parse missed it
-    if step == 1 and any(w in t for w in ["low", "medium", "high", "moderate", "energetic", "calm"]):
+    if t in YES_NO:
         return False
 
-    if step == 2 and any(w in t for w in ["apartment", "flat", "house", "home", "yard", "garden", "space"]):
+    if step == 1 and any(w in t for w in ["low", "medium", "high", "calm", "energetic"]):
         return False
 
-    if step == 3 and any(w in t for w in ["allergy", "allergies", "hypoallergenic", "shedding", "shed", "dander"]):
+    if step == 2 and any(w in t for w in ["apartment", "house", "yard", "garden", "space"]):
         return False
 
-    if step == 4 and any(w in t for w in ["kid", "kids", "child", "children", "baby", "toddler", "family"]):
+    if step == 3 and any(w in t for w in ["allergy", "hypoallergenic", "shedding", "dander"]):
         return False
 
-    # Generic dog-related words mean it's still somewhat on-topic
+    if step == 4 and any(w in t for w in ["kid", "kids", "child", "children", "baby"]):
+        return False
+
     if any(w in t for w in GENERAL_DOG_WORDS):
         return False
 
-    # Otherwise, likely off-topic (e.g., "tell me a joke", "what's the weather?")
     return True
 
 
 # ============================================================
-# Memory summary helper
+# HUMAN-FRIENDLY MEMORY SUMMARY
 # ============================================================
 
 def summarize_preferences(prefs: Dict[str, int]) -> str:
-    """
-    Human-readable memory summary used in the sidebar.
-    """
     if not prefs:
-        return (
-            "I don’t know much yet. Tell me about your activity level, "
-            "living situation, allergies, or whether you have kids."
+        return ("Tell me about your activity level, home size, allergies, "
+                "or whether you have kids — I’ll learn as we chat!")
+
+    parts = []
+
+    if (e := prefs.get("energy")) is not None:
+        parts.append(
+            "You prefer a calmer dog." if e <= 2 else
+            "You’re okay with medium energy." if e == 3 else
+            "You want a high-energy, active dog."
         )
 
-    parts: list[str] = []
+    if (h := prefs.get("home")) is not None:
+        parts.append(
+            "You live in an apartment or smaller space." if h <= 2 else
+            "You have more space, like a house or yard."
+        )
 
-    energy = prefs.get("energy")
-    if energy is not None:
-        if energy <= 2:
-            parts.append("You prefer a calmer, lower-energy dog.")
-        elif energy == 3:
-            parts.append("You’re okay with a medium-energy dog.")
-        else:
-            parts.append("You’d like a high-energy, active dog.")
+    if (a := prefs.get("allergies")) is not None:
+        parts.append(
+            "Low-shedding or hypoallergenic coats matter to you." if a <= 2 else
+            "You’re flexible about shedding."
+        )
 
-    home = prefs.get("home")
-    if home is not None:
-        if home <= 2:
-            parts.append("You mentioned living in an apartment or smaller space.")
-        else:
-            parts.append("You seem to have more space, like a house or yard.")
-
-    allergies = prefs.get("allergies")
-    if allergies is not None:
-        if allergies <= 2:
-            parts.append("Low shedding or hypoallergenic coats are important for you.")
-        else:
-            parts.append("You’re flexible about shedding and allergies.")
-
-    kids = prefs.get("kids")
-    if kids is not None:
-        if kids >= 4:
-            parts.append("Being good with young children is important.")
-        else:
-            parts.append("Kid-friendliness is less critical for you.")
+    if (k := prefs.get("kids")) is not None:
+        parts.append(
+            "Good with young children is important." if k >= 4 else
+            "Kid-friendliness is less critical."
+        )
 
     return " ".join(parts)
