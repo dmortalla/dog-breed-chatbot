@@ -38,13 +38,18 @@ with st.sidebar:
     st.session_state.theme = theme_choice
 
     st.markdown("### 🎙 Voice Input")
+
     try:
-        from st_mic_recorder import mic_recorder
-        audio = mic_recorder(start_prompt="Tap to record your message", stop_prompt="Recording...", format="wav")
+        import streamlit_mic_recorder
+        audio = streamlit_mic_recorder.mic_recorder(
+            start_prompt="Tap to record your message",
+            stop_prompt="Recording...",
+            use_container_width=True
+        )
         if audio:
-            st.session_state.voice_input = audio["text"]
+            st.session_state.voice_input = audio
     except Exception:
-        st.info("Voice input unavailable (package missing).")
+        st.warning("🎤 Voice input unavailable (package missing). Install `streamlit-mic-recorder` to enable it.")
 
     if st.button("🔄 Reset Conversation"):
         st.session_state.messages = []
