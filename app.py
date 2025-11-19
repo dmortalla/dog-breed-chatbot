@@ -48,7 +48,7 @@ with st.sidebar:
     if st.button("🔄 Reset Conversation"):
         st.session_state.messages = []
         init_memory()
-        st.experimental_rerun()
+        st.rerun()   # ← FIXED HERE
 
     st.markdown("### 🧠 Your Preferences")
     st.info(memory_summary())
@@ -78,6 +78,7 @@ if len(st.session_state.messages) == 0:
 
 def process_message(user_msg: str):
     """Main message-processing pipeline."""
+
     # Off-topic check
     if classify_off_topic(user_msg):
         reply = (
@@ -129,7 +130,7 @@ def process_message(user_msg: str):
         add_assistant_msg(summary)
         st.chat_message("assistant").markdown(summary)
 
-        # Recommend breeds using current memory + dog_breeds dataframe
+        # Recommend breeds using memory + dog_breeds
         recs = recommend_breeds(
             dog_breeds,
             mem.get("energy"),
@@ -170,3 +171,4 @@ if user_msg:
     add_user_msg(user_msg)
     st.chat_message("user").markdown(user_msg)
     process_message(user_msg)
+
